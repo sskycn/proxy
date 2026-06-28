@@ -1,0 +1,14 @@
+# Binaries and build output
+/proxy
+*.exe
+*.test
+
+# Go test and coverage output
+coverage.out
+*.coverprofile
+
+# Local caches
+.gocache/
+
+# OS/editor noise
+.DS_Store
