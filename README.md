@@ -12,6 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Forwards to the gateway mixed proxy port `1080` by default.
 - Supports mixed proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT when the upstream gateway port supports them.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
+- Prints compact terminal access logs ending with `direct` or `proxy`.
 - Auto-detects the default gateway IP.
 - Checks whether the detected gateway port is reachable.
 - Scans local IPv4 networks when the detected gateway is unreachable.
@@ -132,6 +133,15 @@ Before exit, learned direct TCP failures are merged into this file. Failed domai
 
 UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway's SOCKS5 UDP support.
 
+## Access Logs
+
+The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The final field identifies whether traffic was sent directly or through the upstream proxy.
+
+```text
+127.0.0.1:53000 -> x.com:443 proxy
+127.0.0.1:53001 -> 192.168.1.10:80 direct
+```
+
 ## Options
 
 ```text
@@ -144,7 +154,7 @@ UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiat
 --refresh-interval <duration> interval for checking local IPv4 changes; 0 disables refresh [default: 5s]
 --scan-timeout <duration>   per-IP timeout when scanning local IPv4 networks [default: 250ms]
 --scan-workers <int>        parallel workers used for IPv4 network scanning
--v, --verbose               enable connection logs
+-v, --verbose               enable debug logs
 ```
 
 ## Make Targets

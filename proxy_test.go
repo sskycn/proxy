@@ -634,6 +634,26 @@ func TestUpstreamRefreshRunsWhenLocalIPChanged(t *testing.T) {
 	}
 }
 
+func TestAccessLogIdentifiesRoute(t *testing.T) {
+	var buf bytes.Buffer
+	if err := accessLog(&buf, "127.0.0.1:1234", "x.com:443", "direct"); err != nil {
+		t.Fatal(err)
+	}
+	if err := accessLog(&buf, "127.0.0.1:1235", "example.com:443", "proxy"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"127.0.0.1:1234 -> x.com:443 direct",
+		"127.0.0.1:1235 -> example.com:443 proxy",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("access log = %q, missing %q", got, want)
+		}
+	}
+}
+
 func dialHTTPConnect(t *testing.T, proxyAddr string, targetAddr string) net.Conn {
 	t.Helper()
 	client, err := net.DialTimeout("tcp", proxyAddr, time.Second)

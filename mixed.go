@@ -73,7 +73,7 @@ func (s *proxyServer) routeMixed(ctx context.Context, client net.Conn, reader *b
 		}
 	}
 
-	return s.proxyViaUpstream(ctx, client, reader, nil)
+	return s.proxyViaUpstream(ctx, client, reader, nil, "unknown")
 }
 
 func (s *proxyServer) handleSocks5(ctx context.Context, client net.Conn, reader *bufio.Reader) error {
@@ -125,6 +125,9 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 					return err
 				}
 			}
+			if err := accessLog(s.log, client.RemoteAddr().String(), target, "direct"); err != nil {
+				return err
+			}
 			return s.bridge(direct, client, reader)
 		}
 	} else if s.cfg.Verbose {
@@ -148,6 +151,9 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 		if err := logf(s.log, "proxy socks %s -> %s via %s\n", client.RemoteAddr(), net.JoinHostPort(req.host, strconv.Itoa(int(req.port))), target); err != nil {
 			return err
 		}
+	}
+	if err := accessLog(s.log, client.RemoteAddr().String(), net.JoinHostPort(req.host, strconv.Itoa(int(req.port))), "proxy"); err != nil {
+		return err
 	}
 	return s.bridge(upstream, client, reader)
 }
@@ -179,6 +185,9 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 						return err
 					}
 				}
+				if err := accessLog(s.log, client.RemoteAddr().String(), directTarget, "direct"); err != nil {
+					return err
+				}
 				return s.bridge(direct, client, reader)
 			}
 			rewritten, err := rewriteHTTPProxyRequest(req)
@@ -193,6 +202,9 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 					return err
 				}
 			}
+			if err := accessLog(s.log, client.RemoteAddr().String(), directTarget, "direct"); err != nil {
+				return err
+			}
 			return s.bridge(direct, client, reader)
 		}
 	} else if s.cfg.Verbose {
@@ -201,7 +213,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 		}
 	}
 
-	return s.proxyViaUpstream(ctx, client, reader, req.raw)
+	return s.proxyViaUpstream(ctx, client, reader, req.raw, directTarget)
 }
 
 func (s *proxyServer) connectDirectTCP(ctx context.Context, cacheKey string, host string, target string) (net.Conn, bool, error) {

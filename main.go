@@ -82,7 +82,7 @@ func buildApp() *cmd.App {
 			f.DurationVar(&cfg.ScanTimeout, "scan-timeout", cfg.ScanTimeout, "per-IP timeout when scanning local IPv4 networks", "")
 			f.IntVar(&cfg.ScanWorkers, "scan-workers", cfg.ScanWorkers, "parallel workers used for IPv4 network scanning", "")
 			f.IntVar(&cfg.BufferSize, "buffer-size", cfg.BufferSize, "per-direction copy buffer size in bytes", "")
-			f.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "enable connection logs", "v")
+			f.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "enable debug logs", "v")
 		},
 		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
 			if len(args) != 0 {
@@ -471,7 +471,7 @@ func (s *proxyServer) connectUpstreamRaw(ctx context.Context) (net.Conn, string,
 	return upstream, target, nil
 }
 
-func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, clientReader io.Reader, initial []byte) error {
+func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, clientReader io.Reader, initial []byte, accessTarget string) error {
 	upstream, target, err := s.connectUpstreamRaw(ctx)
 	if err != nil {
 		if s.cfg.Verbose {
@@ -492,6 +492,9 @@ func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, cli
 		if err := logf(s.log, "proxy %s -> %s\n", client.RemoteAddr(), target); err != nil {
 			return err
 		}
+	}
+	if err := accessLog(s.log, client.RemoteAddr().String(), accessTarget, "proxy"); err != nil {
+		return err
 	}
 
 	var src io.Reader = clientReader
@@ -540,6 +543,11 @@ func closeWrite(conn net.Conn) error {
 
 func logf(w io.Writer, format string, args ...any) error {
 	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
+func accessLog(w io.Writer, client string, target string, route string) error {
+	_, err := fmt.Fprintf(w, "%s -> %s %s\n", client, target, route)
 	return err
 }
 

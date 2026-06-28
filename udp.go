@@ -168,8 +168,10 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 		if err != nil {
 			return err
 		}
-		_, err = r.conn.WriteToUDP(dgram.payload, target)
-		return err
+		if _, err = r.conn.WriteToUDP(dgram.payload, target); err != nil {
+			return err
+		}
+		return accessLog(r.server.log, addr.String(), target.String(), "direct")
 	}
 	upstream, err := r.ensureUpstream(ctx)
 	if err != nil {
@@ -184,7 +186,7 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 			return err
 		}
 	}
-	return nil
+	return accessLog(r.server.log, addr.String(), net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port))), "proxy")
 }
 
 func (r *udpRelay) handleRemotePacket(addr *net.UDPAddr, packet []byte) error {
