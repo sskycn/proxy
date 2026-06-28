@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -247,6 +249,398 @@ func TestRunProxyDirectsInternalHTTPConnect(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("proxy did not stop")
 	}
+}
+
+func TestRunProxyCachesDirectFailureAndSkipsRetry(t *testing.T) {
+	targetAddr := reserveTCPAddr(t)
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close upstream listener: %v", err)
+		}
+	})
+	upstreamLines := make(chan string, 2)
+	upstreamErr := make(chan error, 1)
+	go httpConnectUpstream(upstream, upstreamLines, upstreamErr, 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listenAddr := reserveTCPAddr(t)
+	_, upstreamPortText, err := net.SplitHostPort(upstream.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamPort, err := strconv.Atoi(upstreamPortText)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runProxy(ctx, config{
+			ListenAddr:  listenAddr,
+			GatewayIP:   "127.0.0.1",
+			GatewayPort: upstreamPort,
+			DialTimeout: 100 * time.Millisecond,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, listenAddr)
+
+	first := dialHTTPConnect(t, listenAddr, targetAddr)
+	if err := first.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	if line := <-upstreamLines; !strings.Contains(line, targetAddr) {
+		t.Fatalf("first upstream line = %q, want target %s", line, targetAddr)
+	}
+
+	direct, err := net.Listen("tcp", targetAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close late direct listener: %v", err)
+		}
+	})
+	directHit := make(chan struct{}, 1)
+	go acceptSignal(direct, directHit)
+
+	second := dialHTTPConnect(t, listenAddr, targetAddr)
+	if err := second.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	if line := <-upstreamLines; !strings.Contains(line, targetAddr) {
+		t.Fatalf("second upstream line = %q, want target %s", line, targetAddr)
+	}
+	select {
+	case <-directHit:
+		t.Fatal("direct target was retried after cached failure")
+	default:
+	}
+	select {
+	case err := <-upstreamErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not stop")
+	}
+}
+
+func TestRunProxyForceUpstreamCIDRSkipsDirect(t *testing.T) {
+	direct, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close direct listener: %v", err)
+		}
+	})
+	directHit := make(chan struct{}, 1)
+	go acceptSignal(direct, directHit)
+
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close upstream listener: %v", err)
+		}
+	})
+	upstreamLines := make(chan string, 1)
+	upstreamErr := make(chan error, 1)
+	go httpConnectUpstream(upstream, upstreamLines, upstreamErr, 1)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{"force_upstream":{"ip_cidrs":["127.0.0.1/32"]}}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listenAddr := reserveTCPAddr(t)
+	_, upstreamPortText, err := net.SplitHostPort(upstream.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamPort, err := strconv.Atoi(upstreamPortText)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runProxy(ctx, config{
+			ListenAddr:  listenAddr,
+			GatewayIP:   "127.0.0.1",
+			GatewayPort: upstreamPort,
+			ConfigPath:  configPath,
+			DialTimeout: time.Second,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, listenAddr)
+
+	client := dialHTTPConnect(t, listenAddr, direct.Addr().String())
+	if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	if line := <-upstreamLines; !strings.Contains(line, direct.Addr().String()) {
+		t.Fatalf("upstream line = %q, want target %s", line, direct.Addr())
+	}
+	select {
+	case <-directHit:
+		t.Fatal("force upstream target was sent directly")
+	default:
+	}
+	select {
+	case err := <-upstreamErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not stop")
+	}
+}
+
+func TestLoadRouteRulesForceUpstreamMatchers(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{
+		"force_upstream": {
+			"domains": ["exact.example.com"],
+			"domain_prefixes": ["api."],
+			"domain_suffixes": ["x.com"],
+			"ip_cidrs": ["203.0.113.0/24"],
+			"ips": ["2001:db8::1"]
+		}
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := loadRouteRules(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{
+		"exact.example.com",
+		"api.example.com",
+		"x.com",
+		"assets.x.com",
+		"203.0.113.8",
+		"[2001:db8::1]",
+	} {
+		if !rules.shouldForceUpstream(host) {
+			t.Fatalf("host %s should force upstream", host)
+		}
+	}
+	for _, host := range []string{
+		"other.example.com",
+		"notx.com",
+		"203.0.114.1",
+		"2001:db8::2",
+	} {
+		if rules.shouldForceUpstream(host) {
+			t.Fatalf("host %s should not force upstream", host)
+		}
+	}
+}
+
+func TestPersistDirectFailuresCreatesAndDedupesConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	hosts := []string{
+		"Example.COM.",
+		"example.com",
+		"203.0.113.8",
+		"[2001:db8::8]",
+	}
+
+	if err := persistDirectFailures(configPath, hosts); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistDirectFailures(configPath, hosts); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := readRouteConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(cfg.ForceUpstream.Domains, ","), "example.com"; got != want {
+		t.Fatalf("domains = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(cfg.ForceUpstream.IPs, ","), "2001:db8::8,203.0.113.8"; got != want {
+		t.Fatalf("ips = %q, want %q", got, want)
+	}
+}
+
+func TestPersistDirectFailuresSkipsCoveredRules(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{
+		"force_upstream": {
+			"domain_suffixes": ["x.com"],
+			"ip_cidrs": ["203.0.113.0/24"]
+		}
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts := []string{"api.x.com", "203.0.113.8", "new.example.com"}
+	if err := persistDirectFailures(configPath, hosts); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := readRouteConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(cfg.ForceUpstream.Domains, ","), "new.example.com"; got != want {
+		t.Fatalf("domains = %q, want %q", got, want)
+	}
+	if len(cfg.ForceUpstream.IPs) != 0 {
+		t.Fatalf("ips = %v, want empty", cfg.ForceUpstream.IPs)
+	}
+}
+
+func TestResolveConfigPathUsesExecutableDirectory(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveConfigPath("config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(filepath.Dir(executable), "config.json")
+	if got != want {
+		t.Fatalf("resolved config path = %q, want %q", got, want)
+	}
+
+	absolute := filepath.Join(t.TempDir(), "custom.json")
+	got, err = resolveConfigPath(absolute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != absolute {
+		t.Fatalf("absolute config path = %q, want %q", got, absolute)
+	}
+
+	disabled, err := resolveConfigPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled != "" {
+		t.Fatalf("disabled config path = %q, want empty", disabled)
+	}
+}
+
+func dialHTTPConnect(t *testing.T, proxyAddr string, targetAddr string) net.Conn {
+	t.Helper()
+	client, err := net.DialTimeout("tcp", proxyAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := "CONNECT " + targetAddr + " HTTP/1.1\r\nHost: " + targetAddr + "\r\n\r\n"
+	if _, err := client.Write([]byte(request)); err != nil {
+		if closeErr := client.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(client)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		if closeErr := client.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "200") {
+		if closeErr := client.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(closeErr)
+		}
+		t.Fatalf("CONNECT response line = %q", line)
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if closeErr := client.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+				t.Fatal(errors.Join(err, closeErr))
+			}
+			t.Fatal(err)
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+	return client
+}
+
+func httpConnectUpstream(listener net.Listener, lines chan<- string, errCh chan<- error, count int) {
+	defer close(lines)
+	for i := 0; i < count; i++ {
+		conn, err := listener.Accept()
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				errCh <- err
+			}
+			return
+		}
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			errCh <- errors.Join(err, conn.Close())
+			return
+		}
+		lines <- line
+		for {
+			header, err := reader.ReadString('\n')
+			if err != nil {
+				errCh <- errors.Join(err, conn.Close())
+				return
+			}
+			if header == "\r\n" || header == "\n" {
+				break
+			}
+		}
+		if _, err := conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			errCh <- errors.Join(err, conn.Close())
+			return
+		}
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errCh <- err
+			return
+		}
+	}
+	errCh <- nil
 }
 
 func TestRunProxyDirectsInternalSOCKS5(t *testing.T) {
@@ -597,6 +991,7 @@ func udpEchoOnce(conn *net.UDPConn, errCh chan<- error) {
 }
 
 func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
+	targetAddr := reserveTCPAddr(t)
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -681,12 +1076,13 @@ func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
 			t.Errorf("close client: %v", err)
 		}
 	})
-	if _, err := client.Write([]byte("CONNECT example.com:443 HTTP/1.1\r\n\r\n")); err != nil {
+	request := "CONNECT " + targetAddr + " HTTP/1.1\r\n\r\n"
+	if _, err := client.Write([]byte(request)); err != nil {
 		t.Fatal(err)
 	}
 
 	line := <-requestLine
-	if line != "CONNECT example.com:443 HTTP/1.1\r\n" {
+	if line != "CONNECT "+targetAddr+" HTTP/1.1\r\n" {
 		t.Fatalf("request line = %q", line)
 	}
 	select {

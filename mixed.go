@@ -106,28 +106,31 @@ func (s *proxyServer) handleSocks5(ctx context.Context, client net.Conn, reader 
 }
 
 func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, reader *bufio.Reader, req socksRequest) error {
-	if hostIsInternal(ctx, req.host) {
-		target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
-		direct, err := s.dialer.DialContext(ctx, "tcp", target)
-		if err != nil {
-			if writeErr := writeSocks5Reply(client, 0x05); writeErr != nil {
-				return errors.Join(err, writeErr)
+	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
+	cacheKey := directCacheKey("tcp", req.host, strconv.Itoa(int(req.port)))
+	if !s.routes.shouldForceUpstream(req.host) {
+		direct, tried, err := s.connectDirectTCP(ctx, cacheKey, req.host, target)
+		if err != nil && s.cfg.Verbose {
+			if logErr := logf(s.log, "direct socks %s failed, fallback upstream: %v\n", target, err); logErr != nil {
+				return logErr
 			}
-			return nil
 		}
-		defer closeConnWithLog(direct, s.log, "direct socks target "+target)
-		if err := tuneTCP(direct); err != nil {
-			return err
-		}
-		if err := writeSocks5Reply(client, socksReplySucceeded); err != nil {
-			return err
-		}
-		if s.cfg.Verbose {
-			if err := logf(s.log, "direct socks %s -> %s\n", client.RemoteAddr(), target); err != nil {
+		if tried && err == nil {
+			defer closeConnWithLog(direct, s.log, "direct socks target "+target)
+			if err := writeSocks5Reply(client, socksReplySucceeded); err != nil {
 				return err
 			}
+			if s.cfg.Verbose {
+				if err := logf(s.log, "direct socks %s -> %s\n", client.RemoteAddr(), target); err != nil {
+					return err
+				}
+			}
+			return s.bridge(direct, client, reader)
 		}
-		return s.bridge(direct, client, reader)
+	} else if s.cfg.Verbose {
+		if err := logf(s.log, "force upstream socks %s\n", target); err != nil {
+			return err
+		}
 	}
 
 	upstream, target, err := s.connectViaUpstreamSocks5(ctx, req)
@@ -157,42 +160,72 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	targetHost := trimHostBrackets(host)
 	directTarget := net.JoinHostPort(targetHost, port)
 
-	if hostIsInternal(ctx, targetHost) {
-		direct, err := s.dialer.DialContext(ctx, "tcp", directTarget)
-		if err != nil {
-			return writeHTTPBadGateway(client)
+	cacheKey := directCacheKey("tcp", targetHost, port)
+	if !s.routes.shouldForceUpstream(targetHost) {
+		direct, tried, err := s.connectDirectTCP(ctx, cacheKey, targetHost, directTarget)
+		if err != nil && s.cfg.Verbose {
+			if logErr := logf(s.log, "direct http %s failed, fallback upstream: %v\n", directTarget, err); logErr != nil {
+				return logErr
+			}
 		}
-		defer closeConnWithLog(direct, s.log, "direct http target "+directTarget)
-		if err := tuneTCP(direct); err != nil {
-			return err
-		}
-		if strings.EqualFold(req.method, "CONNECT") {
-			if err := writeAll(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+		if tried && err == nil {
+			defer closeConnWithLog(direct, s.log, "direct http target "+directTarget)
+			if strings.EqualFold(req.method, "CONNECT") {
+				if err := writeAll(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+					return err
+				}
+				if s.cfg.Verbose {
+					if err := logf(s.log, "direct connect %s -> %s\n", client.RemoteAddr(), directTarget); err != nil {
+						return err
+					}
+				}
+				return s.bridge(direct, client, reader)
+			}
+			rewritten, err := rewriteHTTPProxyRequest(req)
+			if err != nil {
+				return err
+			}
+			if err := writeAll(direct, rewritten); err != nil {
 				return err
 			}
 			if s.cfg.Verbose {
-				if err := logf(s.log, "direct connect %s -> %s\n", client.RemoteAddr(), directTarget); err != nil {
+				if err := logf(s.log, "direct http %s -> %s\n", client.RemoteAddr(), directTarget); err != nil {
 					return err
 				}
 			}
 			return s.bridge(direct, client, reader)
 		}
-		rewritten, err := rewriteHTTPProxyRequest(req)
-		if err != nil {
+	} else if s.cfg.Verbose {
+		if err := logf(s.log, "force upstream http %s\n", directTarget); err != nil {
 			return err
 		}
-		if err := writeAll(direct, rewritten); err != nil {
-			return err
-		}
-		if s.cfg.Verbose {
-			if err := logf(s.log, "direct http %s -> %s\n", client.RemoteAddr(), directTarget); err != nil {
-				return err
-			}
-		}
-		return s.bridge(direct, client, reader)
 	}
 
 	return s.proxyViaUpstream(ctx, client, reader, req.raw)
+}
+
+func (s *proxyServer) connectDirectTCP(ctx context.Context, cacheKey string, host string, target string) (net.Conn, bool, error) {
+	if !s.direct.shouldTry(cacheKey) {
+		return nil, false, nil
+	}
+	conn, err := s.dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		s.direct.markUpstreamOnly(cacheKey, host)
+		return nil, true, err
+	}
+	if err := tuneTCP(conn); err != nil {
+		closeErr := conn.Close()
+		s.direct.markUpstreamOnly(cacheKey, host)
+		if closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			return nil, true, errors.Join(err, closeErr)
+		}
+		return nil, true, err
+	}
+	return conn, true, nil
+}
+
+func directCacheKey(network string, host string, port string) string {
+	return network + ":" + strings.ToLower(trimHostBrackets(host)) + ":" + port
 }
 
 func (s *proxyServer) connectViaUpstreamSocks5(ctx context.Context, req socksRequest) (net.Conn, string, error) {

@@ -4,6 +4,7 @@ DIST_DIR ?= dist
 LISTEN ?= 127.0.0.1:1080
 GATEWAY_IP ?=
 GATEWAY_PORT ?= 1080
+CONFIG ?= $(CURDIR)/config.json
 GOCACHE ?= $(CURDIR)/.gocache
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -52,7 +53,7 @@ tidy:
 	$(GO) mod tidy
 
 run:
-	$(GO_ENV) $(GO) run . --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
+	$(GO_ENV) $(GO) run . --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
 
 clean:
 	rm -f $(BINARY)
@@ -66,7 +67,7 @@ help:
 	@echo "  make test     Run tests"
 	@echo "  make fmt      Format Go code"
 	@echo "  make tidy     Tidy Go modules"
-	@echo "  make run      Run proxy with LISTEN/GATEWAY_IP/GATEWAY_PORT overrides"
+	@echo "  make run      Run proxy with LISTEN/GATEWAY_IP/GATEWAY_PORT/CONFIG overrides"
 	@echo "  make clean    Remove build output, release output, and local Go cache"
 	@echo ""
 	@echo "Release targets: $(RELEASE_TARGETS)"

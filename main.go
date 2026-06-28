@@ -27,6 +27,7 @@ type config struct {
 	ListenAddr      string
 	GatewayIP       string
 	GatewayPort     int
+	ConfigPath      string
 	DialTimeout     time.Duration
 	RefreshInterval time.Duration
 	ScanTimeout     time.Duration
@@ -39,6 +40,7 @@ func defaultConfig() config {
 	return config{
 		ListenAddr:      "127.0.0.1:1080",
 		GatewayPort:     1080,
+		ConfigPath:      "config.json",
 		DialTimeout:     5 * time.Second,
 		RefreshInterval: 5 * time.Second,
 		ScanTimeout:     250 * time.Millisecond,
@@ -74,6 +76,7 @@ func buildApp() *cmd.App {
 			f.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "local listen address", "l")
 			f.StringVar(&cfg.GatewayIP, "gateway-ip", cfg.GatewayIP, "gateway IP; empty means auto-detect", "")
 			f.IntVar(&cfg.GatewayPort, "gateway-port", cfg.GatewayPort, "gateway mixed proxy port", "p")
+			f.StringVar(&cfg.ConfigPath, "config", cfg.ConfigPath, "JSON route config path; empty disables config loading", "c")
 			f.DurationVar(&cfg.DialTimeout, "dial-timeout", cfg.DialTimeout, "upstream dial timeout", "")
 			f.DurationVar(&cfg.RefreshInterval, "refresh-interval", cfg.RefreshInterval, "interval for refreshing the reachable upstream; 0 disables refresh", "")
 			f.DurationVar(&cfg.ScanTimeout, "scan-timeout", cfg.ScanTimeout, "per-IP timeout when scanning local IPv4 networks", "")
@@ -105,11 +108,54 @@ type proxyServer struct {
 	cfg        config
 	resolver   *upstreamResolver
 	dialer     net.Dialer
+	direct     *directCache
+	routes     *routeRules
 	bufferPool sync.Pool
 	log        io.Writer
 }
 
-func runProxy(ctx context.Context, cfg config, log io.Writer) error {
+type directCache struct {
+	mu           sync.RWMutex
+	upstreamOnly map[string]string
+}
+
+func newDirectCache() *directCache {
+	return &directCache{upstreamOnly: make(map[string]string)}
+}
+
+func (c *directCache) shouldTry(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, blocked := c.upstreamOnly[key]
+	return !blocked
+}
+
+func (c *directCache) markUpstreamOnly(key string, host string) {
+	c.mu.Lock()
+	c.upstreamOnly[key] = normalizeTargetHost(host)
+	c.mu.Unlock()
+}
+
+func (c *directCache) upstreamOnlyHosts() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	seen := make(map[string]struct{}, len(c.upstreamOnly))
+	hosts := make([]string, 0, len(c.upstreamOnly))
+	for _, host := range c.upstreamOnly {
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 	if cfg.GatewayPort <= 0 || cfg.GatewayPort > 65535 {
 		return fmt.Errorf("invalid gateway port: %d", cfg.GatewayPort)
 	}
@@ -124,6 +170,17 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 	}
 	if cfg.BufferSize < 4096 {
 		cfg.BufferSize = 4096
+	}
+
+	configPath, err := resolveConfigPath(cfg.ConfigPath)
+	if err != nil {
+		return err
+	}
+	cfg.ConfigPath = configPath
+
+	routes, err := loadRouteRules(cfg.ConfigPath)
+	if err != nil {
+		return err
 	}
 
 	resolver, err := newUpstreamResolver(ctx, cfg, log)
@@ -150,12 +207,19 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 			Timeout:   cfg.DialTimeout,
 			KeepAlive: 30 * time.Second,
 		},
-		log: log,
+		direct: newDirectCache(),
+		routes: routes,
+		log:    log,
 	}
 	server.bufferPool.New = func() any {
 		buf := make([]byte, cfg.BufferSize)
 		return &buf
 	}
+	defer func() {
+		if err := persistDirectFailures(cfg.ConfigPath, server.direct.upstreamOnlyHosts()); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 
 	if err := logf(log, "listening on %s, forwarding mixed traffic to %s\n", listener.Addr(), resolver.target()); err != nil {
 		return err

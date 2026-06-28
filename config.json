@@ -1,0 +1,17 @@
+{
+  "force_upstream": {
+    "domains": [
+      "x.com",
+      "twitter.com"
+    ],
+    "domain_prefixes": [],
+    "domain_suffixes": [
+      "x.com",
+      "twitter.com",
+      "twimg.com"
+    ],
+    "ips": [],
+    "ip_cidrs": [],
+    "ip_ranges": []
+  }
+}

@@ -17,6 +17,9 @@ English | [简体中文](README.zh-CN.md)
 - Scans local IPv4 networks when the detected gateway is unreachable.
 - Periodically refreshes the reachable upstream so new connections follow network changes.
 - Connects directly to private, loopback, link-local, `localhost`, and `.local` targets instead of forwarding them upstream.
+- Tries direct TCP connections first; if a target cannot be reached directly, remembers that target and sends later connections upstream immediately.
+- Supports `config.json` force-upstream rules by exact domain, domain prefix, domain suffix, exact IP, and IP CIDR/range.
+- Writes learned direct-failure targets back to `config.json` before exit, creating the file when needed and deduplicating existing rules.
 - Uses `pkg.gostartkit.com/cmd v0.2.1` for the command-line interface.
 
 ## Requirements
@@ -73,6 +76,12 @@ Use a different gateway mixed port:
 bin/proxy --gateway-port 7890
 ```
 
+Use a different route config:
+
+```sh
+bin/proxy --config ./config.json
+```
+
 ## Gateway Discovery
 
 When `--gateway-ip` is not set, startup works like this:
@@ -88,7 +97,36 @@ While running, the proxy refreshes the reachable upstream every `--refresh-inter
 
 ## Internal Address Bypass
 
-For SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP CONNECT, and HTTP proxy requests, the proxy inspects the requested target. Private, loopback, link-local, `localhost`, and `.local` targets are connected directly from the local machine and are not forwarded to the upstream gateway. Other targets continue through the upstream mixed proxy.
+For SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP CONNECT, and HTTP proxy requests, the proxy inspects the requested target. Force-upstream rules in `config.json` have the highest priority. Otherwise, TCP targets are tried directly first. If direct TCP connection fails, that target is remembered as upstream-only and later connections skip the direct attempt. UDP targets keep the conservative rule: internal targets go direct, other targets go upstream.
+
+## Route Config
+
+By default the proxy tries to read `config.json` next to the executable. Relative `--config` paths are resolved from the executable directory; absolute paths are used as provided. The included `config.json` sends `x.com`, `twitter.com`, and related subdomains upstream. If that file does not exist, the proxy runs without custom route rules and creates it before exit when new direct failures are learned. Use `--config <path>` to choose another file, or `--config ""` to disable config loading and write-back.
+
+Example:
+
+```json
+{
+  "force_upstream": {
+    "domains": ["x.com", "twitter.com"],
+    "domain_prefixes": ["api.", "pbs.twimg."],
+    "domain_suffixes": ["x.com", "twitter.com"],
+    "ips": ["8.8.8.8"],
+    "ip_cidrs": ["1.1.1.0/24", "2001:4860:4860::/48"],
+    "ip_ranges": ["203.0.113.0/24"]
+  }
+}
+```
+
+Rule behavior:
+
+- `domains`: exact host match.
+- `domain_prefixes`: host starts with the configured value.
+- `domain_suffixes`: matches the domain itself and its subdomains.
+- `ips`: exact IP match.
+- `ip_cidrs` and `ip_ranges`: CIDR prefix match. `ip_ranges` is an alias for CIDR-style ranges.
+
+Before exit, learned direct TCP failures are merged into this file. Failed domain targets are appended to `domains`, and failed IP targets are appended to `ips`. If an existing exact domain, domain prefix, domain suffix, exact IP, or IP CIDR/range already covers the target, nothing is added.
 
 ## UDP Support
 
@@ -98,6 +136,7 @@ UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiat
 
 ```text
 --buffer-size <int>         per-direction copy buffer size in bytes [default: 32768]
+-c, --config <string>       JSON route config path; empty disables config loading [default: "config.json"]
 --dial-timeout <duration>   upstream dial timeout [default: 5s]
 --gateway-ip <string>       gateway IP; empty means auto-detect
 -p, --gateway-port <int>    gateway mixed proxy port [default: 1080]
@@ -119,11 +158,12 @@ make run      # Run with Makefile defaults
 make clean    # Remove build output and local Go cache
 ```
 
-`make run` accepts overrides:
+`make run` uses this repository's `config.json` by default and accepts overrides:
 
 ```sh
 make run LISTEN=127.0.0.1:1081 GATEWAY_PORT=7890
 make run GATEWAY_IP=192.168.1.1
+make run CONFIG=/path/to/config.json
 ```
 
 ## Development
