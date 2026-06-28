@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -390,7 +391,7 @@ func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, cli
 
 	var src io.Reader = clientReader
 	if len(initial) > 0 {
-		src = io.MultiReader(bytesReader(initial), clientReader)
+		src = io.MultiReader(bytes.NewReader(initial), clientReader)
 	}
 	return s.bridge(upstream, client, src)
 }

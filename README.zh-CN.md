@@ -11,10 +11,12 @@
 - 默认监听本机 `127.0.0.1:1080`。
 - 默认转发到网关 mixed 代理端口 `1080`。
 - 当网关端口支持 mixed 协议时，可承载 SOCKS5、HTTP 代理、HTTP CONNECT 等流量。
+- 支持 SOCKS5 UDP ASSOCIATE，可转发 UDP 流量。
 - 自动发现默认网关 IP。
 - 检测发现到的网关端口是否可连通。
 - 如果默认网关不可连通，自动扫描本机所在 IPv4 网段。
 - 运行期间定时刷新可用上游，网络变化后新连接会使用新的目标地址。
+- 对私有地址、回环地址、链路本地地址、`localhost` 和 `.local` 目标直连，不转发到上游。
 - 命令行基于 `pkg.gostartkit.com/cmd v0.2.1`。
 
 ## 环境要求
@@ -83,6 +85,14 @@ bin/proxy --gateway-port 7890
 手动设置 `--gateway-ip` 时，不会扫描网段，会直接使用该 IP。
 
 程序运行期间会按 `--refresh-interval` 定时刷新可用上游。已有连接继续使用当前上游，新连接会使用刷新后的目标地址。
+
+## 内网地址直连
+
+对于 SOCKS5、SOCKS5 UDP ASSOCIATE、HTTP CONNECT 和 HTTP 代理请求，程序会解析请求目标。私有地址、回环地址、链路本地地址、`localhost` 和 `.local` 目标会从本机直接连接，不转发到上游网关。其他目标仍然走上游 mixed 代理。
+
+## UDP 支持
+
+UDP 通过 SOCKS5 UDP ASSOCIATE 支持。客户端先在 TCP mixed 代理端口完成协商，程序返回一个 UDP relay 地址，随后 UDP 数据包使用标准 SOCKS5 UDP 包头。内网 UDP 目标会从本地 relay 直连，非内网 UDP 目标会通过上游网关的 SOCKS5 UDP 能力转发。
 
 ## 参数
 

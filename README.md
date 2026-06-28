@@ -11,10 +11,12 @@ English | [简体中文](README.zh-CN.md)
 - Listens locally on `127.0.0.1:1080` by default.
 - Forwards to the gateway mixed proxy port `1080` by default.
 - Supports mixed proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT when the upstream gateway port supports them.
+- Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
 - Auto-detects the default gateway IP.
 - Checks whether the detected gateway port is reachable.
 - Scans local IPv4 networks when the detected gateway is unreachable.
 - Periodically refreshes the reachable upstream so new connections follow network changes.
+- Connects directly to private, loopback, link-local, `localhost`, and `.local` targets instead of forwarding them upstream.
 - Uses `pkg.gostartkit.com/cmd v0.2.1` for the command-line interface.
 
 ## Requirements
@@ -83,6 +85,14 @@ When `--gateway-ip` is not set, startup works like this:
 Manual `--gateway-ip` disables scanning and uses the provided IP directly.
 
 While running, the proxy refreshes the reachable upstream every `--refresh-interval`. Existing connections continue on their current upstream; new connections use the refreshed target.
+
+## Internal Address Bypass
+
+For SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP CONNECT, and HTTP proxy requests, the proxy inspects the requested target. Private, loopback, link-local, `localhost`, and `.local` targets are connected directly from the local machine and are not forwarded to the upstream gateway. Other targets continue through the upstream mixed proxy.
+
+## UDP Support
+
+UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway's SOCKS5 UDP support.
 
 ## Options
 
