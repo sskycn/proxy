@@ -19,6 +19,8 @@ import (
 
 const version = "v0.1.0"
 
+var errListenerClosedByContext = errors.New("listener closed after context cancellation")
+
 type config struct {
 	ListenAddr  string
 	GatewayIP   string
@@ -86,8 +88,8 @@ func buildApp() *cmd.App {
 		UsageLine: "proxy version",
 		Short:     "print version",
 		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
-			fmt.Fprintln(os.Stdout, version)
-			return nil
+			_, err := fmt.Fprintln(os.Stdout, version)
+			return err
 		},
 	})
 
@@ -126,7 +128,13 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if logErr := logf(log, "close listener: %v\n", err); logErr != nil {
+				return
+			}
+		}
+	}()
 
 	server := &proxyServer{
 		cfg:    cfg,
@@ -142,11 +150,18 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 		return &buf
 	}
 
-	fmt.Fprintf(log, "listening on %s, forwarding mixed traffic to %s\n", listener.Addr(), target)
+	if err := logf(log, "listening on %s, forwarding mixed traffic to %s\n", listener.Addr(), target); err != nil {
+		return err
+	}
 
+	closeErr := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
-		_ = listener.Close()
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			closeErr <- err
+			return
+		}
+		closeErr <- errListenerClosedByContext
 	}()
 
 	var tempDelay time.Duration
@@ -154,6 +169,13 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				select {
+				case closeErrValue := <-closeErr:
+					if closeErrValue != nil && !errors.Is(closeErrValue, errListenerClosedByContext) {
+						return closeErrValue
+					}
+				default:
+				}
 				return nil
 			}
 			if ne, ok := err.(net.Error); ok && ne.Temporary() {
@@ -189,9 +211,13 @@ func resolveGatewayIP(ctx context.Context, cfg config, log io.Writer) (net.IP, e
 		if canConnect(ctx, gatewayIP, cfg.GatewayPort, cfg.ScanTimeout) {
 			return gatewayIP, nil
 		}
-		fmt.Fprintf(log, "gateway %s:%d is not reachable, scanning local IPv4 networks\n", gatewayIP, cfg.GatewayPort)
+		if err := logf(log, "gateway %s:%d is not reachable, scanning local IPv4 networks\n", gatewayIP, cfg.GatewayPort); err != nil {
+			return nil, err
+		}
 	} else {
-		fmt.Fprintf(log, "discover gateway IP failed: %v; scanning local IPv4 networks\n", err)
+		if err := logf(log, "discover gateway IP failed: %v; scanning local IPv4 networks\n", err); err != nil {
+			return nil, err
+		}
 	}
 
 	ip, err := scanLocalIPv4(ctx, cfg.GatewayPort, cfg.ScanTimeout, cfg.ScanWorkers, gatewayIP)
@@ -205,51 +231,98 @@ func resolveGatewayIP(ctx context.Context, cfg config, log io.Writer) (net.IP, e
 }
 
 func (s *proxyServer) handle(ctx context.Context, client net.Conn) {
-	defer client.Close()
-	tuneTCP(client)
+	if err := s.handleConn(ctx, client); err != nil && s.cfg.Verbose {
+		if logErr := logf(s.log, "connection error for %s: %v\n", client.RemoteAddr(), err); logErr != nil {
+			return
+		}
+	}
+}
+
+func (s *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
+	defer func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if logErr := logf(s.log, "close client %s: %v\n", client.RemoteAddr(), err); logErr != nil {
+				return
+			}
+		}
+	}()
+	if err := tuneTCP(client); err != nil {
+		return fmt.Errorf("tune client tcp: %w", err)
+	}
 
 	upstream, err := s.dialer.DialContext(ctx, "tcp", s.target)
 	if err != nil {
 		if s.cfg.Verbose {
-			fmt.Fprintf(s.log, "dial %s failed for %s: %v\n", s.target, client.RemoteAddr(), err)
+			if logErr := logf(s.log, "dial %s failed for %s: %v\n", s.target, client.RemoteAddr(), err); logErr != nil {
+				return fmt.Errorf("write dial failure log: %w", logErr)
+			}
 		}
-		return
+		return nil
 	}
-	defer upstream.Close()
-	tuneTCP(upstream)
+	defer func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if logErr := logf(s.log, "close upstream %s: %v\n", s.target, err); logErr != nil {
+				return
+			}
+		}
+	}()
+	if err := tuneTCP(upstream); err != nil {
+		return fmt.Errorf("tune upstream tcp: %w", err)
+	}
 
 	if s.cfg.Verbose {
-		fmt.Fprintf(s.log, "proxy %s -> %s\n", client.RemoteAddr(), s.target)
+		if err := logf(s.log, "proxy %s -> %s\n", client.RemoteAddr(), s.target); err != nil {
+			return err
+		}
 	}
 
-	done := make(chan struct{}, 2)
+	done := make(chan error, 2)
 	go s.copyAndClose(upstream, client, done)
 	go s.copyAndClose(client, upstream, done)
-	<-done
+	if err := <-done; err != nil && !isExpectedNetworkClose(err) {
+		return err
+	}
+	return nil
 }
 
-func (s *proxyServer) copyAndClose(dst net.Conn, src net.Conn, done chan<- struct{}) {
+func (s *proxyServer) copyAndClose(dst net.Conn, src net.Conn, done chan<- error) {
 	bufPtr := s.bufferPool.Get().(*[]byte)
-	_, _ = io.CopyBuffer(dst, src, *bufPtr)
+	_, copyErr := io.CopyBuffer(dst, src, *bufPtr)
 	s.bufferPool.Put(bufPtr)
-	closeWrite(dst)
-	done <- struct{}{}
+	closeErr := closeWrite(dst)
+	done <- errors.Join(copyErr, closeErr)
 }
 
-func tuneTCP(conn net.Conn) {
+func tuneTCP(conn net.Conn) error {
 	tcp, ok := conn.(*net.TCPConn)
 	if !ok {
-		return
+		return nil
 	}
-	_ = tcp.SetNoDelay(true)
-	_ = tcp.SetKeepAlive(true)
-	_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	return errors.Join(
+		tcp.SetNoDelay(true),
+		tcp.SetKeepAlive(true),
+		tcp.SetKeepAlivePeriod(30*time.Second),
+	)
 }
 
-func closeWrite(conn net.Conn) {
+func closeWrite(conn net.Conn) error {
 	if tcp, ok := conn.(*net.TCPConn); ok {
-		_ = tcp.CloseWrite()
-		return
+		return tcp.CloseWrite()
 	}
-	_ = conn.Close()
+	return conn.Close()
+}
+
+func logf(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
+func isExpectedNetworkClose(err error) bool {
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET)
 }

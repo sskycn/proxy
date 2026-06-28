@@ -26,7 +26,9 @@ func canConnect(ctx context.Context, ip net.IP, port int, timeout time.Duration)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		return false
+	}
 	return true
 }
 
@@ -130,7 +132,7 @@ func localIPv4Networks(gatewayHint net.IP) ([]ipv4Network, error) {
 		}
 		addrs, err := iface.Addrs()
 		if err != nil {
-			continue
+			return nil, err
 		}
 		for _, addr := range addrs {
 			ip, ipNet, ok := ipv4AddrNetwork(addr)
@@ -147,8 +149,11 @@ func localIPv4Networks(gatewayHint net.IP) ([]ipv4Network, error) {
 		if iHasGateway != jHasGateway {
 			return iHasGateway
 		}
-		iOnes, _ := networks[i].network.Mask.Size()
-		jOnes, _ := networks[j].network.Mask.Size()
+		iOnes, iBits := networks[i].network.Mask.Size()
+		jOnes, jBits := networks[j].network.Mask.Size()
+		if iBits != jBits {
+			return iBits > jBits
+		}
 		if iOnes != jOnes {
 			return iOnes > jOnes
 		}

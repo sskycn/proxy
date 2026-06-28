@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -16,24 +17,41 @@ func TestRunProxyForwardsMixedTrafficUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer upstream.Close()
+	t.Cleanup(func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close upstream listener: %v", err)
+		}
+	})
 
 	received := make(chan []byte, 1)
+	serverErr := make(chan error, 1)
 	go func() {
 		for {
 			conn, err := upstream.Accept()
 			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					serverErr <- err
+				}
 				return
 			}
 			buf := make([]byte, 64)
-			n, _ := conn.Read(buf)
+			n, err := conn.Read(buf)
 			if n == 0 {
-				_ = conn.Close()
+				if err != nil && !errors.Is(err, io.EOF) {
+					serverErr <- err
+				}
+				if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					serverErr <- err
+				}
 				continue
 			}
 			received <- append([]byte(nil), buf[:n]...)
-			_, _ = conn.Write([]byte("ok"))
-			_ = conn.Close()
+			if _, err := conn.Write([]byte("ok")); err != nil {
+				serverErr <- err
+			}
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				serverErr <- err
+			}
 			return
 		}
 	}()
@@ -46,7 +64,9 @@ func TestRunProxyForwardsMixedTrafficUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	listenAddr := local.Addr().String()
-	_ = local.Close()
+	if err := local.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	_, portText, err := net.SplitHostPort(upstream.Addr().String())
 	if err != nil {
@@ -73,7 +93,11 @@ func TestRunProxyForwardsMixedTrafficUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close client: %v", err)
+		}
+	})
 
 	payload := []byte{0x05, 0x01, 0x00}
 	if _, err := client.Write(payload); err != nil {
@@ -91,6 +115,11 @@ func TestRunProxyForwardsMixedTrafficUnchanged(t *testing.T) {
 	got := <-received
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("upstream received %v, want %v", got, payload)
+	}
+	select {
+	case err := <-serverErr:
+		t.Fatal(err)
+	default:
 	}
 
 	cancel()
@@ -110,7 +139,9 @@ func waitForTCP(t *testing.T, addr string) {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 20*time.Millisecond)
 		if err == nil {
-			_ = conn.Close()
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("close readiness probe: %v", err)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -123,23 +154,40 @@ func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer upstream.Close()
+	t.Cleanup(func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close upstream listener: %v", err)
+		}
+	})
 
 	requestLine := make(chan string, 1)
+	serverErr := make(chan error, 1)
 	go func() {
 		for {
 			conn, err := upstream.Accept()
 			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					serverErr <- err
+				}
 				return
 			}
-			line, _ := bufio.NewReader(conn).ReadString('\n')
+			line, err := bufio.NewReader(conn).ReadString('\n')
 			if line == "" {
-				_ = conn.Close()
+				if err != nil && !errors.Is(err, io.EOF) {
+					serverErr <- err
+				}
+				if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					serverErr <- err
+				}
 				continue
 			}
 			requestLine <- line
-			_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
-			_ = conn.Close()
+			if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")); err != nil {
+				serverErr <- err
+			}
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				serverErr <- err
+			}
 			return
 		}
 	}()
@@ -152,7 +200,9 @@ func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	listenAddr := local.Addr().String()
-	_ = local.Close()
+	if err := local.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	_, portText, err := net.SplitHostPort(upstream.Addr().String())
 	if err != nil {
@@ -179,7 +229,11 @@ func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close client: %v", err)
+		}
+	})
 	if _, err := client.Write([]byte("CONNECT example.com:443 HTTP/1.1\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +241,11 @@ func TestRunProxyForwardsHTTPRequestStart(t *testing.T) {
 	line := <-requestLine
 	if line != "CONNECT example.com:443 HTTP/1.1\r\n" {
 		t.Fatalf("request line = %q", line)
+	}
+	select {
+	case err := <-serverErr:
+		t.Fatal(err)
+	default:
 	}
 
 	cancel()
