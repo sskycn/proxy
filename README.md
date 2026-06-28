@@ -14,6 +14,7 @@ English | [简体中文](README.zh-CN.md)
 - Auto-detects the default gateway IP.
 - Checks whether the detected gateway port is reachable.
 - Scans local IPv4 networks when the detected gateway is unreachable.
+- Periodically refreshes the reachable upstream so new connections follow network changes.
 - Uses `pkg.gostartkit.com/cmd v0.2.1` for the command-line interface.
 
 ## Requirements
@@ -81,6 +82,8 @@ When `--gateway-ip` is not set, startup works like this:
 
 Manual `--gateway-ip` disables scanning and uses the provided IP directly.
 
+While running, the proxy refreshes the reachable upstream every `--refresh-interval`. Existing connections continue on their current upstream; new connections use the refreshed target.
+
 ## Options
 
 ```text
@@ -89,6 +92,7 @@ Manual `--gateway-ip` disables scanning and uses the provided IP directly.
 --gateway-ip <string>       gateway IP; empty means auto-detect
 -p, --gateway-port <int>    gateway mixed proxy port [default: 1080]
 -l, --listen <string>       local listen address [default: "127.0.0.1:1080"]
+--refresh-interval <duration> interval for refreshing the reachable upstream; 0 disables refresh [default: 5s]
 --scan-timeout <duration>   per-IP timeout when scanning local IPv4 networks [default: 250ms]
 --scan-workers <int>        parallel workers used for IPv4 network scanning
 -v, --verbose               enable connection logs

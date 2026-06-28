@@ -14,6 +14,7 @@
 - 自动发现默认网关 IP。
 - 检测发现到的网关端口是否可连通。
 - 如果默认网关不可连通，自动扫描本机所在 IPv4 网段。
+- 运行期间定时刷新可用上游，网络变化后新连接会使用新的目标地址。
 - 命令行基于 `pkg.gostartkit.com/cmd v0.2.1`。
 
 ## 环境要求
@@ -81,6 +82,8 @@ bin/proxy --gateway-port 7890
 
 手动设置 `--gateway-ip` 时，不会扫描网段，会直接使用该 IP。
 
+程序运行期间会按 `--refresh-interval` 定时刷新可用上游。已有连接继续使用当前上游，新连接会使用刷新后的目标地址。
+
 ## 参数
 
 ```text
@@ -89,6 +92,7 @@ bin/proxy --gateway-port 7890
 --gateway-ip <string>       网关 IP；为空表示自动发现
 -p, --gateway-port <int>    网关 mixed 代理端口 [默认: 1080]
 -l, --listen <string>       本机监听地址 [默认: "127.0.0.1:1080"]
+--refresh-interval <duration> 定时刷新可用上游的间隔；0 表示禁用刷新 [默认: 5s]
 --scan-timeout <duration>   扫描 IPv4 网段时每个 IP 的探测超时 [默认: 250ms]
 --scan-workers <int>        IPv4 网段扫描并发数
 -v, --verbose               输出连接日志

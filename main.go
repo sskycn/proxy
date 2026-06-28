@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -22,24 +23,26 @@ const version = "v0.1.0"
 var errListenerClosedByContext = errors.New("listener closed after context cancellation")
 
 type config struct {
-	ListenAddr  string
-	GatewayIP   string
-	GatewayPort int
-	DialTimeout time.Duration
-	ScanTimeout time.Duration
-	ScanWorkers int
-	BufferSize  int
-	Verbose     bool
+	ListenAddr      string
+	GatewayIP       string
+	GatewayPort     int
+	DialTimeout     time.Duration
+	RefreshInterval time.Duration
+	ScanTimeout     time.Duration
+	ScanWorkers     int
+	BufferSize      int
+	Verbose         bool
 }
 
 func defaultConfig() config {
 	return config{
-		ListenAddr:  "127.0.0.1:1080",
-		GatewayPort: 1080,
-		DialTimeout: 5 * time.Second,
-		ScanTimeout: 250 * time.Millisecond,
-		ScanWorkers: max(64, runtime.GOMAXPROCS(0)*32),
-		BufferSize:  32 * 1024,
+		ListenAddr:      "127.0.0.1:1080",
+		GatewayPort:     1080,
+		DialTimeout:     5 * time.Second,
+		RefreshInterval: 5 * time.Second,
+		ScanTimeout:     250 * time.Millisecond,
+		ScanWorkers:     max(64, runtime.GOMAXPROCS(0)*32),
+		BufferSize:      32 * 1024,
 	}
 }
 
@@ -71,6 +74,7 @@ func buildApp() *cmd.App {
 			f.StringVar(&cfg.GatewayIP, "gateway-ip", cfg.GatewayIP, "gateway IP; empty means auto-detect", "")
 			f.IntVar(&cfg.GatewayPort, "gateway-port", cfg.GatewayPort, "gateway mixed proxy port", "p")
 			f.DurationVar(&cfg.DialTimeout, "dial-timeout", cfg.DialTimeout, "upstream dial timeout", "")
+			f.DurationVar(&cfg.RefreshInterval, "refresh-interval", cfg.RefreshInterval, "interval for refreshing the reachable upstream; 0 disables refresh", "")
 			f.DurationVar(&cfg.ScanTimeout, "scan-timeout", cfg.ScanTimeout, "per-IP timeout when scanning local IPv4 networks", "")
 			f.IntVar(&cfg.ScanWorkers, "scan-workers", cfg.ScanWorkers, "parallel workers used for IPv4 network scanning", "")
 			f.IntVar(&cfg.BufferSize, "buffer-size", cfg.BufferSize, "per-direction copy buffer size in bytes", "")
@@ -98,7 +102,7 @@ func buildApp() *cmd.App {
 
 type proxyServer struct {
 	cfg        config
-	target     string
+	resolver   *upstreamResolver
 	dialer     net.Dialer
 	bufferPool sync.Pool
 	log        io.Writer
@@ -114,16 +118,18 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 	if cfg.ScanWorkers <= 0 {
 		cfg.ScanWorkers = defaultConfig().ScanWorkers
 	}
+	if cfg.RefreshInterval < 0 {
+		return fmt.Errorf("invalid refresh interval: %s", cfg.RefreshInterval)
+	}
 	if cfg.BufferSize < 4096 {
 		cfg.BufferSize = 4096
 	}
 
-	gatewayIP, err := resolveGatewayIP(ctx, cfg, log)
+	resolver, err := newUpstreamResolver(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
 
-	target := net.JoinHostPort(gatewayIP.String(), strconv.Itoa(cfg.GatewayPort))
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return err
@@ -137,8 +143,8 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 	}()
 
 	server := &proxyServer{
-		cfg:    cfg,
-		target: target,
+		cfg:      cfg,
+		resolver: resolver,
 		dialer: net.Dialer{
 			Timeout:   cfg.DialTimeout,
 			KeepAlive: 30 * time.Second,
@@ -150,7 +156,7 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 		return &buf
 	}
 
-	if err := logf(log, "listening on %s, forwarding mixed traffic to %s\n", listener.Addr(), target); err != nil {
+	if err := logf(log, "listening on %s, forwarding mixed traffic to %s\n", listener.Addr(), resolver.target()); err != nil {
 		return err
 	}
 
@@ -164,8 +170,17 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) error {
 		closeErr <- errListenerClosedByContext
 	}()
 
+	refreshErr := resolver.start(ctx)
+
 	var tempDelay time.Duration
 	for {
+		select {
+		case err := <-refreshErr:
+			if err != nil {
+				return err
+			}
+		default:
+		}
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
@@ -230,6 +245,87 @@ func resolveGatewayIP(ctx context.Context, cfg config, log io.Writer) (net.IP, e
 	return ip, nil
 }
 
+type upstreamResolver struct {
+	cfg           config
+	log           io.Writer
+	mu            sync.RWMutex
+	currentTarget string
+}
+
+func newUpstreamResolver(ctx context.Context, cfg config, log io.Writer) (*upstreamResolver, error) {
+	ip, err := resolveGatewayIP(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	return &upstreamResolver{
+		cfg:           cfg,
+		log:           log,
+		currentTarget: net.JoinHostPort(ip.String(), strconv.Itoa(cfg.GatewayPort)),
+	}, nil
+}
+
+func (r *upstreamResolver) target() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.currentTarget
+}
+
+func (r *upstreamResolver) setTarget(target string) {
+	r.mu.Lock()
+	r.currentTarget = target
+	r.mu.Unlock()
+}
+
+func (r *upstreamResolver) start(ctx context.Context) <-chan error {
+	if r.cfg.RefreshInterval == 0 {
+		return nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(r.cfg.RefreshInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := r.refresh(ctx); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+	return errCh
+}
+
+func (r *upstreamResolver) refresh(ctx context.Context) error {
+	ip, err := resolveGatewayIP(ctx, r.cfg, r.log)
+	if err != nil {
+		if logErr := logf(r.log, "refresh upstream failed: %v; keeping %s\n", err, r.target()); logErr != nil {
+			return logErr
+		}
+		return nil
+	}
+
+	next := net.JoinHostPort(ip.String(), strconv.Itoa(r.cfg.GatewayPort))
+	current := r.target()
+	if next == current {
+		return nil
+	}
+
+	r.setTarget(next)
+	if err := logf(r.log, "upstream changed from %s to %s\n", current, next); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *proxyServer) handle(ctx context.Context, client net.Conn) {
 	if err := s.handleConn(ctx, client); err != nil && s.cfg.Verbose {
 		if logErr := logf(s.log, "connection error for %s: %v\n", client.RemoteAddr(), err); logErr != nil {
@@ -250,10 +346,30 @@ func (s *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 		return fmt.Errorf("tune client tcp: %w", err)
 	}
 
-	upstream, err := s.dialer.DialContext(ctx, "tcp", s.target)
+	reader := bufio.NewReader(client)
+	return s.routeMixed(ctx, client, reader)
+}
+
+func (s *proxyServer) connectUpstreamRaw(ctx context.Context) (net.Conn, string, error) {
+	target := s.resolver.target()
+	upstream, err := s.dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return nil, target, err
+	}
+	if err := tuneTCP(upstream); err != nil {
+		if closeErr := upstream.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			return nil, target, errors.Join(fmt.Errorf("tune upstream tcp: %w", err), fmt.Errorf("close upstream after tune failure: %w", closeErr))
+		}
+		return nil, target, fmt.Errorf("tune upstream tcp: %w", err)
+	}
+	return upstream, target, nil
+}
+
+func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, clientReader io.Reader, initial []byte) error {
+	upstream, target, err := s.connectUpstreamRaw(ctx)
 	if err != nil {
 		if s.cfg.Verbose {
-			if logErr := logf(s.log, "dial %s failed for %s: %v\n", s.target, client.RemoteAddr(), err); logErr != nil {
+			if logErr := logf(s.log, "dial %s failed for %s: %v\n", target, client.RemoteAddr(), err); logErr != nil {
 				return fmt.Errorf("write dial failure log: %w", logErr)
 			}
 		}
@@ -261,23 +377,27 @@ func (s *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	}
 	defer func() {
 		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			if logErr := logf(s.log, "close upstream %s: %v\n", s.target, err); logErr != nil {
+			if logErr := logf(s.log, "close upstream %s: %v\n", target, err); logErr != nil {
 				return
 			}
 		}
 	}()
-	if err := tuneTCP(upstream); err != nil {
-		return fmt.Errorf("tune upstream tcp: %w", err)
-	}
-
 	if s.cfg.Verbose {
-		if err := logf(s.log, "proxy %s -> %s\n", client.RemoteAddr(), s.target); err != nil {
+		if err := logf(s.log, "proxy %s -> %s\n", client.RemoteAddr(), target); err != nil {
 			return err
 		}
 	}
 
+	var src io.Reader = clientReader
+	if len(initial) > 0 {
+		src = io.MultiReader(bytesReader(initial), clientReader)
+	}
+	return s.bridge(upstream, client, src)
+}
+
+func (s *proxyServer) bridge(upstream net.Conn, client net.Conn, clientReader io.Reader) error {
 	done := make(chan error, 2)
-	go s.copyAndClose(upstream, client, done)
+	go s.copyAndClose(upstream, clientReader, done)
 	go s.copyAndClose(client, upstream, done)
 	if err := <-done; err != nil && !isExpectedNetworkClose(err) {
 		return err
@@ -285,7 +405,7 @@ func (s *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	return nil
 }
 
-func (s *proxyServer) copyAndClose(dst net.Conn, src net.Conn, done chan<- error) {
+func (s *proxyServer) copyAndClose(dst net.Conn, src io.Reader, done chan<- error) {
 	bufPtr := s.bufferPool.Get().(*[]byte)
 	_, copyErr := io.CopyBuffer(dst, src, *bufPtr)
 	s.bufferPool.Put(bufPtr)
