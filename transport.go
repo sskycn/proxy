@@ -364,6 +364,13 @@ func (s *proxyServer) dialTunnelTransport(ctx context.Context) (net.Conn, error)
 		if err != nil {
 			return nil, err
 		}
+		if s.cfg.TunnelSecurity == tunnelSecurityReality {
+			realityConn, err := dialReality(ctx, conn, s.cfg)
+			if err != nil {
+				return nil, closeAfterError(conn, err)
+			}
+			return realityConn, nil
+		}
 		return conn, nil
 	case tunnelTransportWS:
 		return s.dialWebSocketTunnel(ctx)

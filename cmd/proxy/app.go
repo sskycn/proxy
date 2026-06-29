@@ -49,6 +49,9 @@ func buildApp() *cmd.App {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
 			cfg.Mode = ""
+			cfg.TunnelProtocol = ""
+			cfg.TunnelTransport = ""
+			cfg.TunnelPath = ""
 			if strings.TrimSpace(upstreamProtocolFlag) != "" {
 				cfg.UpstreamProtocol = upstreamProtocolFlag
 			} else {

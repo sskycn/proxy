@@ -6,6 +6,7 @@ LISTEN ?= 127.0.0.1:1080
 MODE ?=
 SERVER_ADDR ?=
 TOKEN ?=
+TUNNEL_PROTOCOL ?=
 TRANSPORT ?=
 TUNNEL_PATH ?=
 TLS ?=
@@ -28,10 +29,10 @@ RELEASE_TARGETS ?= linux/amd64 linux/arm64 linux/arm/7 darwin/amd64 darwin/arm64
 
 ifeq ($(MODE),server)
 RUN_COMMAND := server
-RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(TOKEN),--token $(TOKEN),) $(if $(TRANSPORT),--transport $(TRANSPORT),) $(if $(TUNNEL_PATH),--tunnel-path $(TUNNEL_PATH),) $(if $(TLS_CERT),--tls-cert $(TLS_CERT),) $(if $(TLS_KEY),--tls-key $(TLS_KEY),) $(if $(MUX),--mux=$(MUX),)
+RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(TOKEN),--token $(TOKEN),) $(if $(TUNNEL_PROTOCOL),--tunnel-protocol $(TUNNEL_PROTOCOL),) $(if $(TRANSPORT),--transport $(TRANSPORT),) $(if $(TUNNEL_PATH),--tunnel-path $(TUNNEL_PATH),) $(if $(TLS_CERT),--tls-cert $(TLS_CERT),) $(if $(TLS_KEY),--tls-key $(TLS_KEY),) $(if $(MUX),--mux=$(MUX),)
 else ifeq ($(MODE),client)
 RUN_COMMAND := client
-RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(SERVER_ADDR),--server-addr $(SERVER_ADDR),) $(if $(TOKEN),--token $(TOKEN),) $(if $(TRANSPORT),--transport $(TRANSPORT),) $(if $(TUNNEL_PATH),--tunnel-path $(TUNNEL_PATH),) $(if $(TLS),--tls,) $(if $(TLS_SERVER_NAME),--tls-server-name $(TLS_SERVER_NAME),) $(if $(TLS_INSECURE),--tls-insecure,) $(if $(MUX),--mux=$(MUX),)
+RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(SERVER_ADDR),--server-addr $(SERVER_ADDR),) $(if $(TOKEN),--token $(TOKEN),) $(if $(TUNNEL_PROTOCOL),--tunnel-protocol $(TUNNEL_PROTOCOL),) $(if $(TRANSPORT),--transport $(TRANSPORT),) $(if $(TUNNEL_PATH),--tunnel-path $(TUNNEL_PATH),) $(if $(TLS),--tls,) $(if $(TLS_SERVER_NAME),--tls-server-name $(TLS_SERVER_NAME),) $(if $(TLS_INSECURE),--tls-insecure,) $(if $(MUX),--mux=$(MUX),)
 else ifeq ($(MODE),local)
 RUN_COMMAND := local
 RUN_FLAGS := --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(UPSTREAM_PROTOCOL),--upstream-protocol $(UPSTREAM_PROTOCOL),) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
@@ -94,7 +95,7 @@ help:
 	@echo "  make test     Run tests"
 	@echo "  make fmt      Format Go code"
 	@echo "  make tidy     Tidy Go modules"
-	@echo "  make run      Run proxy with LISTEN/MODE/SERVER_ADDR/TOKEN/TRANSPORT/TUNNEL_PATH/MUX/GATEWAY_IP/GATEWAY_PORT/UPSTREAM_PROTOCOL/CONFIG overrides"
+	@echo "  make run      Run proxy with LISTEN/MODE/SERVER_ADDR/TOKEN/TUNNEL_PROTOCOL/TRANSPORT/TUNNEL_PATH/MUX/GATEWAY_IP/GATEWAY_PORT/UPSTREAM_PROTOCOL/CONFIG overrides"
 	@echo "  make clean    Remove build output, release output, and local Go cache"
 	@echo ""
 	@echo "Release targets: $(RELEASE_TARGETS)"

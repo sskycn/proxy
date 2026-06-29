@@ -26,6 +26,12 @@ const (
 	TunnelTransportWS      = "ws"
 	TunnelTransportH2      = "h2"
 	TunnelTransportH3      = "h3"
+	TunnelProtocolCustom   = "custom"
+	TunnelProtocolVLESS    = "vless"
+	TunnelProtocolVMess    = "vmess"
+	TunnelProtocolTrojan   = "trojan"
+	TunnelSecurityNone     = "none"
+	TunnelSecurityReality  = "reality"
 
 	version                = Version
 	proxyModeLocal         = ProxyModeLocal
@@ -37,6 +43,12 @@ const (
 	tunnelTransportWS      = TunnelTransportWS
 	tunnelTransportH2      = TunnelTransportH2
 	tunnelTransportH3      = TunnelTransportH3
+	tunnelProtocolCustom   = TunnelProtocolCustom
+	tunnelProtocolVLESS    = TunnelProtocolVLESS
+	tunnelProtocolVMess    = TunnelProtocolVMess
+	tunnelProtocolTrojan   = TunnelProtocolTrojan
+	tunnelSecurityNone     = TunnelSecurityNone
+	tunnelSecurityReality  = TunnelSecurityReality
 )
 
 var errListenerClosedByContext = errors.New("listener closed after context cancellation")
@@ -46,6 +58,7 @@ type Config struct {
 	Mode                string
 	ServerAddr          string
 	Token               string
+	TunnelProtocol      string
 	TunnelTransport     string
 	TunnelPath          string
 	TunnelTLS           bool
@@ -53,6 +66,17 @@ type Config struct {
 	TunnelTLSKey        string
 	TunnelTLSServerName string
 	TunnelTLSInsecure   bool
+	TunnelSecurity      string
+	TunnelFlow          string
+	RealityServerName   string
+	RealityServerNames  []string
+	RealityFingerprint  string
+	RealityPublicKey    string
+	RealityPrivateKey   string
+	RealityShortID      string
+	RealityShortIDs     []string
+	RealityDest         string
+	RealitySpiderX      string
 	TunnelMux           bool
 	GatewayIP           string
 	GatewayPort         int
@@ -76,6 +100,8 @@ func defaultConfig() Config {
 	return Config{
 		ListenAddr:       "127.0.0.1:1080",
 		Mode:             proxyModeLocal,
+		TunnelProtocol:   tunnelProtocolCustom,
+		TunnelSecurity:   tunnelSecurityNone,
 		TunnelTransport:  tunnelTransportRaw,
 		TunnelPath:       "/proxy",
 		TunnelMux:        true,
@@ -99,6 +125,7 @@ type proxyServer struct {
 	bufferPool sync.Pool
 	log        io.Writer
 	mux        tunnelMuxClient
+	reality    *realityServer
 }
 
 type directCache struct {
@@ -189,6 +216,17 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 	cfg.TunnelTransport, err = normalizeTunnelTransport(cfg.TunnelTransport)
 	if err != nil {
 		return err
+	}
+	cfg.TunnelProtocol, err = normalizeTunnelProtocol(cfg.TunnelProtocol)
+	if err != nil {
+		return err
+	}
+	cfg.TunnelSecurity, err = normalizeTunnelSecurity(cfg.TunnelSecurity)
+	if err != nil {
+		return err
+	}
+	if cfg.TunnelSecurity == tunnelSecurityReality && (cfg.Mode != proxyModeClient && cfg.Mode != proxyModeServer || cfg.TunnelTransport != tunnelTransportRaw || cfg.TunnelProtocol != tunnelProtocolVLESS) {
+		return errors.New("REALITY tunnel security requires client/server mode with raw transport and vless protocol")
 	}
 	cfg.TunnelPath = normalizeTunnelPath(cfg.TunnelPath)
 	if cfg.Mode == proxyModeClient && strings.TrimSpace(cfg.ServerAddr) == "" {
@@ -347,6 +385,32 @@ func normalizeTunnelTransport(value string) (string, error) {
 		return tunnelTransportH3, nil
 	default:
 		return "", fmt.Errorf("invalid tunnel transport %q; supported values: %s, %s, %s, %s", value, tunnelTransportRaw, tunnelTransportWS, tunnelTransportH2, tunnelTransportH3)
+	}
+}
+
+func normalizeTunnelProtocol(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", tunnelProtocolCustom:
+		return tunnelProtocolCustom, nil
+	case tunnelProtocolVLESS:
+		return tunnelProtocolVLESS, nil
+	case tunnelProtocolVMess:
+		return tunnelProtocolVMess, nil
+	case tunnelProtocolTrojan:
+		return tunnelProtocolTrojan, nil
+	default:
+		return "", fmt.Errorf("invalid tunnel protocol %q; supported values: %s, %s, %s, %s", value, tunnelProtocolCustom, tunnelProtocolVLESS, tunnelProtocolVMess, tunnelProtocolTrojan)
+	}
+}
+
+func normalizeTunnelSecurity(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", tunnelSecurityNone:
+		return tunnelSecurityNone, nil
+	case tunnelSecurityReality:
+		return tunnelSecurityReality, nil
+	default:
+		return "", fmt.Errorf("invalid tunnel security %q; supported values: %s, %s", value, tunnelSecurityNone, tunnelSecurityReality)
 	}
 }
 

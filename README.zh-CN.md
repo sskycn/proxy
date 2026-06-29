@@ -12,7 +12,7 @@
 - 默认转发到网关代理端口 `1080`。
 - 本地支持 mixed 代理流量，包括 SOCKS5、HTTP 代理、HTTP CONNECT。
 - 默认使用 SOCKS5 作为上游协议，也支持 `mixed` 上游模式。
-- 支持 `proxy`、`proxy local`、`proxy client`、`proxy server` 四种命令形态，并带一个轻量自定义隧道协议。
+- 支持 `proxy`、`proxy local`、`proxy client`、`proxy server` 四种命令形态，并支持 `custom`、`vless`、`vmess`、`trojan` 隧道协议。
 - client/server 隧道可承载在 raw TCP、WebSocket、HTTP/2 或 HTTP/3 transport 上。
 - client/server 隧道默认启用多路复用，多条 TCP 连接和 UDP relay 可以共享同一条上游 tunnel transport 连接。
 - 支持 SOCKS5 UDP ASSOCIATE，可转发 UDP 流量。
@@ -118,6 +118,53 @@ bin/proxy server --listen 127.0.0.1:9443 --transport ws --tunnel-path /proxy --t
 bin/proxy client --listen 127.0.0.1:1080 --server-addr proxy.example.com:443 --transport ws --tunnel-path /proxy --tls --token change-me
 ```
 
+使用 VLESS 协议运行 client/server：
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --tunnel-protocol vless --token 11111111-1111-4111-8111-111111111111
+bin/proxy client --server-addr 203.0.113.10:9443 --tunnel-protocol vless --token 11111111-1111-4111-8111-111111111111
+```
+
+连接 Xray VLESS REALITY/Vision 服务端：
+
+```sh
+bin/proxy client \
+  --listen 127.0.0.1:1080 \
+  --server-addr '[2001:db8::10]:443' \
+  --tunnel-protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision \
+  --token 11111111-1111-4111-8111-111111111111 \
+  --reality-server-name example.com \
+  --reality-fingerprint chrome \
+  --reality-public-key PUBLIC_KEY \
+  --reality-short-id ''
+```
+
+启动兼容 Xray 的 VLESS REALITY/Vision 服务端：
+
+```sh
+bin/proxy server \
+  --listen 0.0.0.0:443 \
+  --tunnel-protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision \
+  --token 11111111-1111-4111-8111-111111111111 \
+  --reality-private-key PRIVATE_KEY \
+  --reality-server-names example.com \
+  --reality-short-ids '' \
+  --reality-dest example.com:443
+```
+
+使用 Trojan 协议运行 client/server：
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --tunnel-protocol trojan --token change-me
+bin/proxy client --server-addr 203.0.113.10:9443 --tunnel-protocol trojan --token change-me
+```
+
 使用 HTTP/2：
 
 ```sh
@@ -166,7 +213,7 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 `proxy local` 会强制 local 模式：本地 mixed 代理通过发现到的网关代理转发，即使 `config.json` 里写了 `"mode": "client"` 或 `"mode": "server"`。
 
-`proxy server` 会监听本项目的轻量自定义隧道协议，并在服务端侧连接真实 TCP 或 UDP 目标。使用 `--listen` 指定服务端监听地址，使用 `--token` 要求共享 token 认证。
+`proxy server` 会监听配置的隧道协议，并在服务端侧连接真实 TCP 或 UDP 目标。使用 `--listen` 指定服务端监听地址，使用 `--token` 开启认证。
 
 `proxy client` 保持本地 mixed 代理入口，但会把已解析出目标的 TCP 和 UDP 上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
 
@@ -184,7 +231,18 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 - `h2`：HTTP/2 双向 request/response 流。服务端不配置证书时使用 h2c；配置 `--tls-cert` 和 `--tls-key` 后提供 TLS HTTP/2。
 - `h3`：基于 QUIC 的 HTTP/3。服务端必须配置 `--tls-cert` 和 `--tls-key`，客户端固定使用 `https`。
 
-自定义隧道刻意保持很小，目前承载 TCP 流和 SOCKS5 UDP 数据包，不兼容 VLESS。
+隧道协议可通过 `--tunnel-protocol` 或 `config.json` 里的 `tunnel_protocol` 选择：
+
+- `custom`：本项目的轻量协议。默认值，支持 TCP、SOCKS5 UDP relay 和隧道多路复用。
+- `vless`：VLESS 风格 TCP 请求封装。`--token` 必须是 UUID。
+- `trojan`：Trojan TCP 请求封装。`--token` 作为 Trojan password 使用。
+- `vmess`：项目内兼容的轻量 VMess 模式，使用 UUID 认证和明文 TCP 封装。它用于本项目 client/server 配对，不等同于完整 Xray/v2ray VMess 互通。
+
+作为客户端兼容 Xray REALITY/Vision 时，请使用 `proxy client`，并设置 `--transport raw`、`--tunnel-protocol vless`、`--tunnel-security reality` 和 `--flow xtls-rprx-vision`。REALITY 需要 `--reality-server-name`、`--reality-public-key` 和 UUID 格式的 `--token`；`--reality-fingerprint` 默认是 `chrome`。
+
+作为服务端兼容 Xray REALITY/Vision 时，请使用 `proxy server`，并设置 `--transport raw`、`--tunnel-protocol vless`、`--tunnel-security reality` 和 `--flow xtls-rprx-vision`。REALITY 服务端模式需要 `--reality-private-key`、`--reality-server-names`、`--reality-short-ids`，以及类似 `example.com:443` 的 fallback `--reality-dest`。Xray 客户端需要使用匹配的 public key、server name、shortId、UUID 和 flow。
+
+当前只有 `custom` 支持 SOCKS5 UDP relay 和隧道多路复用。`vless`、`vmess`、`trojan` 只承载 TCP 流量，但仍可运行在 raw、WebSocket、HTTP/2 或 HTTP/3 transport 上。
 
 隧道多路复用默认开启。开启后，`proxy client` 会维持一条到 `proxy server` 的共享 tunnel transport 连接，并为每条被代理的 TCP 连接或 UDP relay 打开一个逻辑 stream。这样可以减少 WebSocket/HTTP/2/HTTP/3 握手次数，也更适合放在 HTTP/CDN 基础设施后面。使用 `--mux=false` 或 `"tunnel_mux": false` 可以退回到每条代理流量使用一条 tunnel transport 连接。
 
@@ -226,11 +284,23 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
+  "tunnel_protocol": "custom",
   "tunnel_transport": "raw",
+  "tunnel_security": "none",
+  "tunnel_flow": "",
   "tunnel_path": "/proxy",
   "tunnel_tls": false,
   "tunnel_tls_server_name": "",
   "tunnel_tls_insecure": false,
+  "reality_server_name": "",
+  "reality_server_names": [],
+  "reality_fingerprint": "chrome",
+  "reality_public_key": "",
+  "reality_private_key": "",
+  "reality_short_id": "",
+  "reality_short_ids": [],
+  "reality_dest": "",
+  "reality_spider_x": "/",
   "tunnel_mux": true,
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
@@ -288,23 +358,38 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 
 ```text
 --server-addr <string>      自定义隧道服务端地址
---token <string>            自定义隧道共享 token
+--token <string>            共享 token、VLESS/VMess UUID 或 Trojan password
+--tunnel-protocol <string>  隧道协议：custom、vless、vmess 或 trojan [默认: custom]
+--tunnel-security <string>  隧道安全层：none 或 reality [默认: none]
+--flow <string>             VLESS flow，例如 xtls-rprx-vision
 --transport <string>        隧道承载层：raw、ws、h2 或 h3 [默认: raw]
 --tunnel-path <string>      HTTP/WebSocket 隧道路由路径 [默认: /proxy]
 --tls                       ws/h2 transport 使用 TLS
 --tls-server-name <string>  TLS server name 覆盖值
 --tls-insecure              跳过 TLS 证书校验
+--reality-server-name <string> REALITY serverName
+--reality-fingerprint <string> REALITY uTLS fingerprint [默认: chrome]
+--reality-public-key <string>  REALITY publicKey
+--reality-short-id <string>    REALITY shortId 十六进制值
+--reality-spider-x <string>    REALITY spiderX 路径
 --mux <bool>                启用隧道多路复用 [默认: true]
 ```
 
 `proxy server` 额外支持：
 
 ```text
---token <string>            自定义隧道共享 token
+--token <string>            共享 token、VLESS/VMess UUID 或 Trojan password
+--tunnel-protocol <string>  隧道协议：custom、vless、vmess 或 trojan [默认: custom]
+--tunnel-security <string>  隧道安全层：none 或 reality [默认: none]
+--flow <string>             VLESS flow，例如 xtls-rprx-vision
 --transport <string>        隧道承载层：raw、ws、h2 或 h3 [默认: raw]
 --tunnel-path <string>      HTTP/WebSocket 隧道路由路径 [默认: /proxy]
 --tls-cert <string>         h2/h3 服务端 TLS 证书文件
 --tls-key <string>          h2/h3 服务端 TLS 私钥文件
+--reality-private-key <string> REALITY privateKey
+--reality-server-names <string> 逗号分隔的 REALITY serverNames
+--reality-short-ids <string>   逗号分隔的 REALITY shortIds 十六进制值
+--reality-dest <string>        REALITY fallback 目标 host:port
 --mux <bool>                启用隧道多路复用 [默认: true]
 ```
 
@@ -329,6 +414,8 @@ make run UPSTREAM_PROTOCOL=mixed
 make run MODE=local
 make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
+make run MODE=server LISTEN=0.0.0.0:9443 TUNNEL_PROTOCOL=vless TOKEN=11111111-1111-4111-8111-111111111111
+make run MODE=client SERVER_ADDR=203.0.113.10:9443 TUNNEL_PROTOCOL=vless TOKEN=11111111-1111-4111-8111-111111111111
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=/proxy TLS=1 TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me

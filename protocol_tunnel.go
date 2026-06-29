@@ -1,0 +1,639 @@
+package proxy
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/netip"
+	"strconv"
+	"strings"
+)
+
+const (
+	protocolCmdTCP = byte(0x01)
+	protocolCmdUDP = byte(0x03)
+
+	vlessVersion      = byte(0x00)
+	vlessAtypIPv4     = byte(0x01)
+	vlessAtypDomain   = byte(0x02)
+	vlessAtypIPv6     = byte(0x03)
+	vlessMaxAddonSize = 1024
+
+	vmessLiteVersion  = byte(0x01)
+	vmessLiteStatusOK = byte(0x00)
+
+	protocolMaxLineLength = 256
+)
+
+var (
+	errProtocolUnauthorized    = errors.New("protocol tunnel unauthorized")
+	errProtocolUnsupported     = errors.New("protocol tunnel command unsupported")
+	errProtocolInvalidAddress  = errors.New("protocol tunnel invalid address")
+	errProtocolInvalidResponse = errors.New("protocol tunnel invalid response")
+)
+
+type protocolTunnelRequest struct {
+	host string
+	port uint16
+	flow string
+}
+
+func (s *proxyServer) handleProtocolTunnelConn(ctx context.Context, conn net.Conn, reader *bufio.Reader) error {
+	req, err := s.readProtocolTunnelRequest(reader)
+	if err != nil {
+		return err
+	}
+	return s.handleProtocolTunnelTCP(ctx, conn, reader, req)
+}
+
+func (s *proxyServer) readProtocolTunnelRequest(reader *bufio.Reader) (protocolTunnelRequest, error) {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		return readVLESSTCPRequest(reader, s.cfg.Token)
+	case tunnelProtocolTrojan:
+		return readTrojanTCPRequest(reader, s.cfg.Token)
+	case tunnelProtocolVMess:
+		return readVMessLiteTCPRequest(reader, s.cfg.Token)
+	default:
+		return protocolTunnelRequest{}, fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func (s *proxyServer) handleProtocolTunnelTCP(ctx context.Context, conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) error {
+	if req.host == "" || req.port == 0 {
+		return errProtocolInvalidAddress
+	}
+	clientConn := conn
+	var clientReader io.Reader = reader
+	if s.cfg.TunnelProtocol == tunnelProtocolVLESS {
+		vision, err := s.prepareVLESSBodyConn(conn, reader, req)
+		if err != nil {
+			return err
+		}
+		if vision != nil {
+			clientConn = vision
+			clientReader = vision
+		}
+	}
+	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
+	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
+	outbound, err := s.dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return err
+	}
+	defer closeConnWithLog(outbound, s.log, "protocol tunnel tcp target "+target)
+	if err := tuneTCP(outbound); err != nil {
+		return err
+	}
+	if err := s.writeProtocolTunnelResponse(conn); err != nil {
+		return err
+	}
+	if err := s.bridge(outbound, clientConn, clientReader); err != nil {
+		if logErr := accessLog(s.log, accessSource(s.cfg.TunnelProtocol, conn.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	return accessLog(s.log, accessSource(s.cfg.TunnelProtocol, conn.RemoteAddr()), "-", logTarget, "ok")
+}
+
+func (s *proxyServer) prepareVLESSBodyConn(conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) (net.Conn, error) {
+	configuredFlow := strings.TrimSpace(s.cfg.TunnelFlow)
+	if req.flow != configuredFlow {
+		return nil, fmt.Errorf("vless flow mismatch: got %q, configured %q", req.flow, configuredFlow)
+	}
+	if req.flow == "" {
+		return nil, nil
+	}
+	if !isVisionFlow(req.flow) {
+		return nil, fmt.Errorf("unsupported vless flow %q", req.flow)
+	}
+	userID, err := parseUUIDToken(s.cfg.Token)
+	if err != nil {
+		return nil, err
+	}
+	return newVisionConnWithReader(conn, userID, nil, reader), nil
+}
+
+func (s *proxyServer) writeProtocolTunnelResponse(w io.Writer) error {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		return writeVLESSResponse(w)
+	case tunnelProtocolVMess:
+		return writeVMessLiteResponse(w)
+	case tunnelProtocolTrojan:
+		return nil
+	default:
+		return fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func (s *proxyServer) connectViaProtocolTunnelTCP(ctx context.Context, req socksRequest) (net.Conn, string, error) {
+	target := s.cfg.ServerAddr
+	conn, err := s.dialTunnelTransport(ctx)
+	if err != nil {
+		return nil, target, err
+	}
+	if err := tuneTCP(conn); err != nil {
+		return nil, target, closeAfterError(conn, err)
+	}
+	if err := s.writeProtocolTunnelRequest(conn, req); err != nil {
+		return nil, target, closeAfterError(conn, err)
+	}
+	if s.cfg.TunnelProtocol == tunnelProtocolVLESS && isVisionFlow(s.cfg.TunnelFlow) {
+		userID, err := parseUUIDToken(s.cfg.Token)
+		if err != nil {
+			return nil, target, closeAfterError(conn, err)
+		}
+		vision := newVisionConn(conn, userID, readVLESSResponse)
+		if err := vision.WriteInitialPadding(); err != nil {
+			return nil, target, closeAfterError(vision, err)
+		}
+		return vision, target, nil
+	}
+	if err := s.readProtocolTunnelResponse(conn); err != nil {
+		return nil, target, closeAfterError(conn, err)
+	}
+	return conn, target, nil
+}
+
+func (s *proxyServer) writeProtocolTunnelRequest(w io.Writer, req socksRequest) error {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		return writeVLESSTCPRequest(w, s.cfg.Token, s.cfg.TunnelFlow, req.host, req.port)
+	case tunnelProtocolTrojan:
+		return writeTrojanTCPRequest(w, s.cfg.Token, req.host, req.port)
+	case tunnelProtocolVMess:
+		return writeVMessLiteTCPRequest(w, s.cfg.Token, req.host, req.port)
+	default:
+		return fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func (s *proxyServer) readProtocolTunnelResponse(reader io.Reader) error {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		return readVLESSResponse(reader)
+	case tunnelProtocolVMess:
+		return readVMessLiteResponse(reader)
+	case tunnelProtocolTrojan:
+		return nil
+	default:
+		return fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, port uint16) error {
+	userID, err := parseUUIDToken(token)
+	if err != nil {
+		return err
+	}
+	addons, err := vlessHeaderAddons(flow)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, 0, 64+len(host))
+	header = append(header, vlessVersion)
+	header = append(header, userID[:]...)
+	header = append(header, byte(len(addons)))
+	header = append(header, addons...)
+	header = append(header, protocolCmdTCP)
+	header = appendUint16(header, port)
+	var appendErr error
+	header, appendErr = appendVLESSAddress(header, host)
+	if appendErr != nil {
+		return appendErr
+	}
+	return writeAll(w, header)
+}
+
+func vlessHeaderAddons(flow string) ([]byte, error) {
+	trimmed := strings.TrimSpace(flow)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if len(trimmed) > 252 {
+		return nil, errTunnelInvalidLength
+	}
+	addons := make([]byte, 0, len(trimmed)+2)
+	addons = append(addons, 0x0a)
+	addons = appendVarint(addons, uint64(len(trimmed)))
+	addons = append(addons, trimmed...)
+	if len(addons) > 255 {
+		return nil, errTunnelInvalidLength
+	}
+	return addons, nil
+}
+
+func isVisionFlow(flow string) bool {
+	return strings.TrimSpace(flow) == "xtls-rprx-vision"
+}
+
+func appendVarint(dst []byte, value uint64) []byte {
+	for value >= 0x80 {
+		dst = append(dst, byte(value)|0x80)
+		value >>= 7
+	}
+	return append(dst, byte(value))
+}
+
+func readVLESSTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+	header := make([]byte, 18)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if header[0] != vlessVersion {
+		return protocolTunnelRequest{}, errTunnelBadVersion
+	}
+	userID := [16]byte{}
+	copy(userID[:], header[1:17])
+	if err := verifyUUIDToken(expectedToken, userID); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	addonLen := int(header[17])
+	if addonLen > vlessMaxAddonSize {
+		return protocolTunnelRequest{}, errTunnelInvalidLength
+	}
+	var flow string
+	if addonLen > 0 {
+		addons := make([]byte, addonLen)
+		if _, err := io.ReadFull(reader, addons); err != nil {
+			return protocolTunnelRequest{}, err
+		}
+		var flowErr error
+		flow, flowErr = vlessAddonsFlow(addons)
+		if flowErr != nil {
+			return protocolTunnelRequest{}, flowErr
+		}
+	}
+	tail := make([]byte, 4)
+	if _, err := io.ReadFull(reader, tail); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if tail[0] != protocolCmdTCP {
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	host, err := readVLESSAddress(reader, tail[3])
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	return protocolTunnelRequest{
+		host: host,
+		port: binary.BigEndian.Uint16(tail[1:3]),
+		flow: flow,
+	}, nil
+}
+
+func vlessAddonsFlow(addons []byte) (string, error) {
+	for len(addons) > 0 {
+		key, n, err := consumeVarint(addons)
+		if err != nil {
+			return "", err
+		}
+		addons = addons[n:]
+		fieldNumber := key >> 3
+		wireType := key & 0x07
+		switch wireType {
+		case 0:
+			_, consumed, err := consumeVarint(addons)
+			if err != nil {
+				return "", err
+			}
+			addons = addons[consumed:]
+		case 2:
+			length, consumed, err := consumeVarint(addons)
+			if err != nil {
+				return "", err
+			}
+			addons = addons[consumed:]
+			if length > uint64(len(addons)) {
+				return "", errTunnelInvalidLength
+			}
+			value := addons[:int(length)]
+			addons = addons[int(length):]
+			if fieldNumber == 1 {
+				return string(value), nil
+			}
+		default:
+			return "", fmt.Errorf("unsupported vless addon wire type %d", wireType)
+		}
+	}
+	return "", nil
+}
+
+func consumeVarint(src []byte) (uint64, int, error) {
+	var value uint64
+	for i, b := range src {
+		if i == 10 {
+			return 0, 0, errTunnelInvalidLength
+		}
+		value |= uint64(b&0x7f) << (uint(i) * 7)
+		if b < 0x80 {
+			return value, i + 1, nil
+		}
+	}
+	return 0, 0, io.ErrUnexpectedEOF
+}
+
+func writeVLESSResponse(w io.Writer) error {
+	return writeAll(w, []byte{vlessVersion, 0x00})
+}
+
+func readVLESSResponse(reader io.Reader) error {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	addonLen := int(header[1])
+	if addonLen > vlessMaxAddonSize {
+		return errTunnelInvalidLength
+	}
+	if addonLen == 0 {
+		return nil
+	}
+	if _, err := io.CopyN(io.Discard, reader, int64(addonLen)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func appendVLESSAddress(dst []byte, host string) ([]byte, error) {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return nil, errProtocolInvalidAddress
+	}
+	if addr, err := netip.ParseAddr(trimHostBrackets(trimmed)); err == nil {
+		if addr.Is4() {
+			ip4 := addr.As4()
+			dst = append(dst, vlessAtypIPv4)
+			return append(dst, ip4[:]...), nil
+		}
+		ip16 := addr.As16()
+		dst = append(dst, vlessAtypIPv6)
+		return append(dst, ip16[:]...), nil
+	}
+	if len(trimmed) > tunnelMaxHostLength {
+		return nil, errTunnelInvalidLength
+	}
+	dst = append(dst, vlessAtypDomain, byte(len(trimmed)))
+	return append(dst, trimmed...), nil
+}
+
+func readVLESSAddress(reader io.Reader, atyp byte) (string, error) {
+	switch atyp {
+	case vlessAtypIPv4:
+		buf := make([]byte, net.IPv4len)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	case vlessAtypIPv6:
+		buf := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	case vlessAtypDomain:
+		lenBuf := make([]byte, 1)
+		if _, err := io.ReadFull(reader, lenBuf); err != nil {
+			return "", err
+		}
+		return readStringN(reader, int(lenBuf[0]))
+	default:
+		return "", errProtocolInvalidAddress
+	}
+}
+
+func writeTrojanTCPRequest(w io.Writer, password string, host string, port uint16) error {
+	header := make([]byte, 0, 96+len(host))
+	header = append(header, []byte(trojanPasswordHash(password))...)
+	header = append(header, '\r', '\n', protocolCmdTCP)
+	var appendErr error
+	header, appendErr = appendSocksAddress(header, host, port)
+	if appendErr != nil {
+		return appendErr
+	}
+	header = append(header, '\r', '\n')
+	return writeAll(w, header)
+}
+
+func readTrojanTCPRequest(reader *bufio.Reader, expectedPassword string) (protocolTunnelRequest, error) {
+	line, err := readLineLimited(reader, protocolMaxLineLength)
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if !strings.HasSuffix(line, "\r\n") {
+		return protocolTunnelRequest{}, errProtocolUnauthorized
+	}
+	hash := strings.TrimSuffix(line, "\r\n")
+	if expectedPassword != "" && hash != trojanPasswordHash(expectedPassword) {
+		return protocolTunnelRequest{}, errProtocolUnauthorized
+	}
+	cmd, err := reader.ReadByte()
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if cmd != protocolCmdTCP {
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	host, port, err := readSocksAddress(reader)
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	crlf := make([]byte, 2)
+	if _, err := io.ReadFull(reader, crlf); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if crlf[0] != '\r' || crlf[1] != '\n' {
+		return protocolTunnelRequest{}, errProtocolUnauthorized
+	}
+	return protocolTunnelRequest{host: host, port: port}, nil
+}
+
+func trojanPasswordHash(password string) string {
+	sum := sha256.Sum224([]byte(password))
+	return hex.EncodeToString(sum[:])
+}
+
+func writeVMessLiteTCPRequest(w io.Writer, token string, host string, port uint16) error {
+	userID, err := parseUUIDToken(token)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, 0, 64+len(host))
+	header = append(header, vmessLiteVersion)
+	header = append(header, userID[:]...)
+	header = append(header, protocolCmdTCP)
+	header = appendUint16(header, port)
+	var appendErr error
+	header, appendErr = appendVLESSAddress(header, host)
+	if appendErr != nil {
+		return appendErr
+	}
+	return writeAll(w, header)
+}
+
+func readVMessLiteTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+	header := make([]byte, 21)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if header[0] != vmessLiteVersion {
+		return protocolTunnelRequest{}, errTunnelBadVersion
+	}
+	userID := [16]byte{}
+	copy(userID[:], header[1:17])
+	if err := verifyUUIDToken(expectedToken, userID); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if header[17] != protocolCmdTCP {
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	host, err := readVLESSAddress(reader, header[20])
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	return protocolTunnelRequest{
+		host: host,
+		port: binary.BigEndian.Uint16(header[18:20]),
+	}, nil
+}
+
+func writeVMessLiteResponse(w io.Writer) error {
+	return writeAll(w, []byte{vmessLiteVersion, vmessLiteStatusOK})
+}
+
+func readVMessLiteResponse(reader io.Reader) error {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	if header[0] != vmessLiteVersion || header[1] != vmessLiteStatusOK {
+		return errProtocolInvalidResponse
+	}
+	return nil
+}
+
+func appendSocksAddress(dst []byte, host string, port uint16) ([]byte, error) {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return nil, errProtocolInvalidAddress
+	}
+	if addr, err := netip.ParseAddr(trimHostBrackets(trimmed)); err == nil {
+		if addr.Is4() {
+			ip4 := addr.As4()
+			dst = append(dst, socksAtypIPv4)
+			dst = append(dst, ip4[:]...)
+			return appendUint16(dst, port), nil
+		}
+		ip16 := addr.As16()
+		dst = append(dst, socksAtypIPv6)
+		dst = append(dst, ip16[:]...)
+		return appendUint16(dst, port), nil
+	}
+	if len(trimmed) > tunnelMaxHostLength {
+		return nil, errTunnelInvalidLength
+	}
+	dst = append(dst, socksAtypDomain, byte(len(trimmed)))
+	dst = append(dst, trimmed...)
+	return appendUint16(dst, port), nil
+}
+
+func readSocksAddress(reader io.Reader) (string, uint16, error) {
+	atypBuf := make([]byte, 1)
+	if _, err := io.ReadFull(reader, atypBuf); err != nil {
+		return "", 0, err
+	}
+	var host string
+	switch atypBuf[0] {
+	case socksAtypIPv4:
+		buf := make([]byte, net.IPv4len)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			return "", 0, err
+		}
+		host = net.IP(buf).String()
+	case socksAtypIPv6:
+		buf := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			return "", 0, err
+		}
+		host = net.IP(buf).String()
+	case socksAtypDomain:
+		lenBuf := make([]byte, 1)
+		if _, err := io.ReadFull(reader, lenBuf); err != nil {
+			return "", 0, err
+		}
+		var err error
+		host, err = readStringN(reader, int(lenBuf[0]))
+		if err != nil {
+			return "", 0, err
+		}
+	default:
+		return "", 0, errProtocolInvalidAddress
+	}
+	portBuf := make([]byte, 2)
+	if _, err := io.ReadFull(reader, portBuf); err != nil {
+		return "", 0, err
+	}
+	return host, binary.BigEndian.Uint16(portBuf), nil
+}
+
+func parseUUIDToken(token string) ([16]byte, error) {
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(token)), "-", "")
+	if len(normalized) != 32 {
+		return [16]byte{}, errors.New("tunnel protocol token must be a UUID")
+	}
+	decoded, err := hex.DecodeString(normalized)
+	if err != nil {
+		return [16]byte{}, err
+	}
+	if len(decoded) != 16 {
+		return [16]byte{}, errors.New("decoded UUID has invalid length")
+	}
+	userID := [16]byte{}
+	copy(userID[:], decoded)
+	return userID, nil
+}
+
+func verifyUUIDToken(expectedToken string, actual [16]byte) error {
+	if strings.TrimSpace(expectedToken) == "" {
+		return nil
+	}
+	expected, err := parseUUIDToken(expectedToken)
+	if err != nil {
+		return err
+	}
+	if expected != actual {
+		return errProtocolUnauthorized
+	}
+	return nil
+}
+
+func appendUint16(dst []byte, value uint16) []byte {
+	return append(dst, byte(value>>8), byte(value))
+}
+
+func readLineLimited(reader *bufio.Reader, max int) (string, error) {
+	var builder strings.Builder
+	for {
+		part, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		if builder.Len()+len(part) > max {
+			return "", errTunnelInvalidLength
+		}
+		if _, err := builder.WriteString(part); err != nil {
+			return "", err
+		}
+		if strings.HasSuffix(part, "\n") {
+			return builder.String(), nil
+		}
+	}
+}

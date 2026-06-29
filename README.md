@@ -12,7 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Forwards to the gateway proxy port `1080` by default.
 - Accepts mixed local proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT.
 - Uses SOCKS5 for upstream traffic by default; `mixed` upstream mode is also supported.
-- Supports `proxy`, `proxy local`, `proxy client`, and `proxy server` commands with a compact custom tunnel protocol.
+- Supports `proxy`, `proxy local`, `proxy client`, and `proxy server` commands with configurable tunnel protocols: `custom`, `vless`, `vmess`, and `trojan`.
 - Carries the client/server tunnel over raw TCP, WebSocket, HTTP/2, or HTTP/3 transport.
 - Multiplexes client/server tunnel streams by default, so many TCP connections and UDP relays can share one upstream tunnel transport connection.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
@@ -118,6 +118,53 @@ bin/proxy server --listen 127.0.0.1:9443 --transport ws --tunnel-path /proxy --t
 bin/proxy client --listen 127.0.0.1:1080 --server-addr proxy.example.com:443 --transport ws --tunnel-path /proxy --tls --token change-me
 ```
 
+Run client/server mode with VLESS:
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --tunnel-protocol vless --token 11111111-1111-4111-8111-111111111111
+bin/proxy client --server-addr 203.0.113.10:9443 --tunnel-protocol vless --token 11111111-1111-4111-8111-111111111111
+```
+
+Connect to an Xray VLESS REALITY/Vision server:
+
+```sh
+bin/proxy client \
+  --listen 127.0.0.1:1080 \
+  --server-addr '[2001:db8::10]:443' \
+  --tunnel-protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision \
+  --token 11111111-1111-4111-8111-111111111111 \
+  --reality-server-name example.com \
+  --reality-fingerprint chrome \
+  --reality-public-key PUBLIC_KEY \
+  --reality-short-id ''
+```
+
+Run an Xray-compatible VLESS REALITY/Vision server:
+
+```sh
+bin/proxy server \
+  --listen 0.0.0.0:443 \
+  --tunnel-protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision \
+  --token 11111111-1111-4111-8111-111111111111 \
+  --reality-private-key PRIVATE_KEY \
+  --reality-server-names example.com \
+  --reality-short-ids '' \
+  --reality-dest example.com:443
+```
+
+Run client/server mode with Trojan:
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --tunnel-protocol trojan --token change-me
+bin/proxy client --server-addr 203.0.113.10:9443 --tunnel-protocol trojan --token change-me
+```
+
 Run over HTTP/2:
 
 ```sh
@@ -166,7 +213,7 @@ Running `proxy` without a subcommand defaults to local mode. If `config.json` co
 
 `proxy local` forces local mode: the local mixed proxy forwards through the discovered gateway proxy, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
 
-`proxy server` listens for this project's compact custom tunnel protocol and connects to the requested TCP or UDP target from the server side. Use `--listen` to choose the server bind address and `--token` to require a shared token.
+`proxy server` listens for the configured tunnel protocol and connects to the requested TCP or UDP target from the server side. Use `--listen` to choose the server bind address and `--token` to require authentication.
 
 `proxy client` keeps the local mixed proxy listener, but upstream TCP and UDP traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
 
@@ -184,7 +231,18 @@ The tunnel transport is selected with `--transport` or `tunnel_transport` in `co
 - `h2`: HTTP/2 bidirectional request/response stream. Without server certificates it runs as h2c; with `--tls-cert` and `--tls-key` it serves TLS HTTP/2.
 - `h3`: HTTP/3 over QUIC. The server requires `--tls-cert` and `--tls-key`, and the client always uses `https`.
 
-The custom tunnel is intentionally small and currently carries TCP streams and SOCKS5 UDP packets. It is not VLESS-compatible.
+The tunnel protocol is selected with `--tunnel-protocol` or `tunnel_protocol` in `config.json`:
+
+- `custom`: this project's compact protocol. This is the default, supports TCP, SOCKS5 UDP relay, and tunnel multiplexing.
+- `vless`: VLESS-style TCP request framing. `--token` must be a UUID.
+- `trojan`: Trojan TCP request framing. `--token` is used as the Trojan password.
+- `vmess`: a lightweight project-compatible VMess mode using UUID authentication and clear TCP framing. It is intended for this project's client/server pairing; it is not full Xray/v2ray VMess interoperability.
+
+For Xray REALITY/Vision client compatibility, use `proxy client` with `--transport raw`, `--tunnel-protocol vless`, `--tunnel-security reality`, and `--flow xtls-rprx-vision`. REALITY requires `--reality-server-name`, `--reality-public-key`, and a UUID `--token`; `--reality-fingerprint` defaults to `chrome`.
+
+For Xray REALITY/Vision server compatibility, use `proxy server` with `--transport raw`, `--tunnel-protocol vless`, `--tunnel-security reality`, and `--flow xtls-rprx-vision`. REALITY server mode requires `--reality-private-key`, `--reality-server-names`, `--reality-short-ids`, and a fallback `--reality-dest` such as `example.com:443`. The Xray client must use the matching public key, server name, shortId, UUID, and flow.
+
+Only `custom` currently supports SOCKS5 UDP relay and tunnel multiplexing. `vless`, `vmess`, and `trojan` carry TCP streams over the selected transport.
 
 Tunnel multiplexing is enabled by default. With multiplexing enabled, `proxy client` keeps a shared tunnel transport connection to `proxy server`, then opens one logical stream for each proxied TCP connection or UDP relay. This reduces WebSocket/HTTP/2/HTTP/3 handshakes and works better behind HTTP/CDN infrastructure. Use `--mux=false` or `"tunnel_mux": false` to fall back to one tunnel transport connection per proxied stream.
 
@@ -226,11 +284,23 @@ Example:
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
+  "tunnel_protocol": "custom",
   "tunnel_transport": "raw",
+  "tunnel_security": "none",
+  "tunnel_flow": "",
   "tunnel_path": "/proxy",
   "tunnel_tls": false,
   "tunnel_tls_server_name": "",
   "tunnel_tls_insecure": false,
+  "reality_server_name": "",
+  "reality_server_names": [],
+  "reality_fingerprint": "chrome",
+  "reality_public_key": "",
+  "reality_private_key": "",
+  "reality_short_id": "",
+  "reality_short_ids": [],
+  "reality_dest": "",
+  "reality_spider_x": "/",
   "tunnel_mux": true,
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
@@ -288,23 +358,38 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 
 ```text
 --server-addr <string>      custom tunnel server address
---token <string>            shared token for custom tunnel auth
+--token <string>            shared token, VLESS/VMess UUID, or Trojan password
+--tunnel-protocol <string>  tunnel protocol: custom, vless, vmess, or trojan [default: custom]
+--tunnel-security <string>  tunnel security: none or reality [default: none]
+--flow <string>             VLESS flow, for example xtls-rprx-vision
 --transport <string>        tunnel transport: raw, ws, h2, or h3 [default: raw]
 --tunnel-path <string>      HTTP/WebSocket tunnel path [default: /proxy]
 --tls                       use TLS for ws/h2 transport
 --tls-server-name <string>  TLS server name override
 --tls-insecure              skip TLS certificate verification
+--reality-server-name <string> REALITY serverName
+--reality-fingerprint <string> REALITY uTLS fingerprint [default: chrome]
+--reality-public-key <string>  REALITY publicKey
+--reality-short-id <string>    REALITY shortId hex
+--reality-spider-x <string>    REALITY spiderX path
 --mux <bool>                enable tunnel multiplexing [default: true]
 ```
 
 `proxy server` adds:
 
 ```text
---token <string>            shared token for custom tunnel auth
+--token <string>            shared token, VLESS/VMess UUID, or Trojan password
+--tunnel-protocol <string>  tunnel protocol: custom, vless, vmess, or trojan [default: custom]
+--tunnel-security <string>  tunnel security: none or reality [default: none]
+--flow <string>             VLESS flow, for example xtls-rprx-vision
 --transport <string>        tunnel transport: raw, ws, h2, or h3 [default: raw]
 --tunnel-path <string>      HTTP/WebSocket tunnel path [default: /proxy]
 --tls-cert <string>         TLS certificate file for h2/h3 server
 --tls-key <string>          TLS private key file for h2/h3 server
+--reality-private-key <string> REALITY privateKey
+--reality-server-names <string> comma-separated REALITY serverNames
+--reality-short-ids <string>   comma-separated REALITY shortIds in hex
+--reality-dest <string>        REALITY fallback destination host:port
 --mux <bool>                enable tunnel multiplexing [default: true]
 ```
 
@@ -329,6 +414,8 @@ make run UPSTREAM_PROTOCOL=mixed
 make run MODE=local
 make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
+make run MODE=server LISTEN=0.0.0.0:9443 TUNNEL_PROTOCOL=vless TOKEN=11111111-1111-4111-8111-111111111111
+make run MODE=client SERVER_ADDR=203.0.113.10:9443 TUNNEL_PROTOCOL=vless TOKEN=11111111-1111-4111-8111-111111111111
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=/proxy TLS=1 TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me

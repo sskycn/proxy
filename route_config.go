@@ -15,6 +15,7 @@ type routeConfigFile struct {
 	Mode                string              `json:"mode,omitempty"`
 	ServerAddr          string              `json:"server_addr,omitempty"`
 	Token               string              `json:"token,omitempty"`
+	TunnelProtocol      string              `json:"tunnel_protocol,omitempty"`
 	TunnelTransport     string              `json:"tunnel_transport,omitempty"`
 	TunnelPath          string              `json:"tunnel_path,omitempty"`
 	TunnelTLS           bool                `json:"tunnel_tls,omitempty"`
@@ -22,6 +23,17 @@ type routeConfigFile struct {
 	TunnelTLSKey        string              `json:"tunnel_tls_key,omitempty"`
 	TunnelTLSServerName string              `json:"tunnel_tls_server_name,omitempty"`
 	TunnelTLSInsecure   bool                `json:"tunnel_tls_insecure,omitempty"`
+	TunnelSecurity      string              `json:"tunnel_security,omitempty"`
+	TunnelFlow          string              `json:"tunnel_flow,omitempty"`
+	RealityServerName   string              `json:"reality_server_name,omitempty"`
+	RealityServerNames  []string            `json:"reality_server_names,omitempty"`
+	RealityFingerprint  string              `json:"reality_fingerprint,omitempty"`
+	RealityPublicKey    string              `json:"reality_public_key,omitempty"`
+	RealityPrivateKey   string              `json:"reality_private_key,omitempty"`
+	RealityShortID      string              `json:"reality_short_id,omitempty"`
+	RealityShortIDs     []string            `json:"reality_short_ids,omitempty"`
+	RealityDest         string              `json:"reality_dest,omitempty"`
+	RealitySpiderX      string              `json:"reality_spider_x,omitempty"`
 	TunnelMux           *bool               `json:"tunnel_mux,omitempty"`
 	UpstreamProtocol    string              `json:"upstream_protocol,omitempty"`
 	ForceUpstream       forceUpstreamConfig `json:"force_upstream"`
@@ -102,6 +114,9 @@ func applyRuntimeConfigDefaults(cfg *config) error {
 	if strings.TrimSpace(cfg.Token) == "" {
 		cfg.Token = fileCfg.Token
 	}
+	if strings.TrimSpace(cfg.TunnelProtocol) == "" {
+		cfg.TunnelProtocol = fileCfg.TunnelProtocol
+	}
 	if strings.TrimSpace(cfg.TunnelTransport) == "" {
 		cfg.TunnelTransport = fileCfg.TunnelTransport
 	}
@@ -122,6 +137,39 @@ func applyRuntimeConfigDefaults(cfg *config) error {
 	}
 	if !cfg.TunnelTLSInsecure {
 		cfg.TunnelTLSInsecure = fileCfg.TunnelTLSInsecure
+	}
+	if strings.TrimSpace(cfg.TunnelSecurity) == "" {
+		cfg.TunnelSecurity = fileCfg.TunnelSecurity
+	}
+	if strings.TrimSpace(cfg.TunnelFlow) == "" {
+		cfg.TunnelFlow = fileCfg.TunnelFlow
+	}
+	if strings.TrimSpace(cfg.RealityServerName) == "" {
+		cfg.RealityServerName = fileCfg.RealityServerName
+	}
+	if len(cfg.RealityServerNames) == 0 {
+		cfg.RealityServerNames = fileCfg.RealityServerNames
+	}
+	if strings.TrimSpace(cfg.RealityFingerprint) == "" {
+		cfg.RealityFingerprint = fileCfg.RealityFingerprint
+	}
+	if strings.TrimSpace(cfg.RealityPublicKey) == "" {
+		cfg.RealityPublicKey = fileCfg.RealityPublicKey
+	}
+	if strings.TrimSpace(cfg.RealityPrivateKey) == "" {
+		cfg.RealityPrivateKey = fileCfg.RealityPrivateKey
+	}
+	if strings.TrimSpace(cfg.RealityShortID) == "" {
+		cfg.RealityShortID = fileCfg.RealityShortID
+	}
+	if len(cfg.RealityShortIDs) == 0 {
+		cfg.RealityShortIDs = fileCfg.RealityShortIDs
+	}
+	if strings.TrimSpace(cfg.RealityDest) == "" {
+		cfg.RealityDest = fileCfg.RealityDest
+	}
+	if strings.TrimSpace(cfg.RealitySpiderX) == "" {
+		cfg.RealitySpiderX = fileCfg.RealitySpiderX
 	}
 	if fileCfg.TunnelMux != nil {
 		cfg.TunnelMux = *fileCfg.TunnelMux

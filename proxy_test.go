@@ -499,7 +499,10 @@ func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
 	configBody := []byte(`{
 		"mode": "client",
 		"server_addr": "203.0.113.10:9443",
-		"token": "secret"
+		"token": "secret",
+		"tunnel_protocol": "vless",
+		"tunnel_transport": "ws",
+		"tunnel_path": "/ws"
 	}`)
 	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
 		t.Fatal(err)
@@ -517,6 +520,15 @@ func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
 	}
 	if cfg.Token != "secret" {
 		t.Fatalf("token = %q", cfg.Token)
+	}
+	if cfg.TunnelProtocol != tunnelProtocolVLESS {
+		t.Fatalf("tunnel protocol = %q", cfg.TunnelProtocol)
+	}
+	if cfg.TunnelTransport != tunnelTransportWS {
+		t.Fatalf("tunnel transport = %q", cfg.TunnelTransport)
+	}
+	if cfg.TunnelPath != "/ws" {
+		t.Fatalf("tunnel path = %q", cfg.TunnelPath)
 	}
 
 	cfg = config{ConfigPath: configPath, Mode: proxyModeServer}
@@ -1754,6 +1766,118 @@ func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
 	}
 }
 
+func TestRunProxyClientServerProtocolTunnel(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		token    string
+	}{
+		{
+			name:     "vless",
+			protocol: tunnelProtocolVLESS,
+			token:    "11111111-1111-4111-8111-111111111111",
+		},
+		{
+			name:     "vmess",
+			protocol: tunnelProtocolVMess,
+			token:    "22222222-2222-4222-8222-222222222222",
+		},
+		{
+			name:     "trojan",
+			protocol: tunnelProtocolTrojan,
+			token:    "secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			direct, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					t.Errorf("close direct listener: %v", err)
+				}
+			})
+			directErr := make(chan error, 1)
+			go echoOnce(direct, directErr)
+
+			serverAddr := reserveTCPAddr(t)
+			serverCtx, serverCancel := context.WithCancel(context.Background())
+			defer serverCancel()
+			serverErr := make(chan error, 1)
+			go func() {
+				serverErr <- runProxy(serverCtx, config{
+					Mode:            proxyModeServer,
+					ListenAddr:      serverAddr,
+					Token:           tt.token,
+					TunnelProtocol:  tt.protocol,
+					TunnelTransport: tunnelTransportRaw,
+					DialTimeout:     time.Second,
+					BufferSize:      4096,
+				}, io.Discard)
+			}()
+			waitForTCP(t, serverAddr)
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			configBody := []byte(`{
+				"force_upstream": {
+					"ip_cidrs": ["127.0.0.1/32"]
+				}
+			}`)
+			if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			clientAddr := reserveTCPAddr(t)
+			clientCtx, clientCancel := context.WithCancel(context.Background())
+			defer clientCancel()
+			clientErr := make(chan error, 1)
+			go func() {
+				clientErr <- runProxy(clientCtx, config{
+					Mode:            proxyModeClient,
+					ListenAddr:      clientAddr,
+					ServerAddr:      serverAddr,
+					Token:           tt.token,
+					TunnelProtocol:  tt.protocol,
+					TunnelTransport: tunnelTransportRaw,
+					ConfigPath:      configPath,
+					DialTimeout:     time.Second,
+					BufferSize:      4096,
+				}, io.Discard)
+			}()
+			waitForTCP(t, clientAddr)
+
+			client := dialHTTPConnect(t, clientAddr, direct.Addr().String())
+			if _, err := client.Write([]byte("hi")); err != nil {
+				t.Fatal(err)
+			}
+			reply := make([]byte, 2)
+			if _, err := io.ReadFull(client, reply); err != nil {
+				t.Fatal(err)
+			}
+			if string(reply) != "OK" {
+				t.Fatalf("reply = %q, want OK", reply)
+			}
+			if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-directErr:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("direct target did not receive tunneled TCP")
+			}
+
+			stopProxy(t, clientCancel, clientErr)
+			stopProxy(t, serverCancel, serverErr)
+		})
+	}
+}
+
 func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
 	for _, transport := range []string{tunnelTransportRaw, tunnelTransportWS, tunnelTransportH2} {
 		t.Run(transport, func(t *testing.T) {
@@ -1947,5 +2071,123 @@ func TestBuildTunnelURLTransports(t *testing.T) {
 				t.Fatalf("url = %q, want %q", got.String(), tt.want)
 			}
 		})
+	}
+}
+
+func TestVLESSHeaderAddonsVisionFlow(t *testing.T) {
+	got, err := vlessHeaderAddons("xtls-rprx-vision")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{0x0a, 0x10}
+	want = append(want, []byte("xtls-rprx-vision")...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("addons = %x, want %x", got, want)
+	}
+}
+
+func TestReadVLESSTCPRequestReturnsVisionFlow(t *testing.T) {
+	var buf bytes.Buffer
+	const token = "11111111-1111-4111-8111-111111111111"
+	if err := writeVLESSTCPRequest(&buf, token, "xtls-rprx-vision", "example.com", 443); err != nil {
+		t.Fatal(err)
+	}
+	req, err := readVLESSTCPRequest(&buf, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.flow != "xtls-rprx-vision" {
+		t.Fatalf("flow = %q, want xtls-rprx-vision", req.flow)
+	}
+	if req.host != "example.com" || req.port != 443 {
+		t.Fatalf("target = %s:%d, want example.com:443", req.host, req.port)
+	}
+}
+
+func TestBuildRealityServerConfig(t *testing.T) {
+	cfg, err := buildRealityServerConfig(config{
+		RealityPrivateKey:  "cMmYlsTT1jdi-LbnzNxsewNbu-NSlFl3CS277gubak8",
+		RealityServerNames: []string{"Get.GoStartKit.com"},
+		RealityShortIDs:    []string{"", "0a1b"},
+		DialTimeout:        time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dest != "get.gostartkit.com:443" {
+		t.Fatalf("dest = %q, want get.gostartkit.com:443", cfg.Dest)
+	}
+	if !cfg.ServerNames["get.gostartkit.com"] {
+		t.Fatalf("server names = %#v, want get.gostartkit.com", cfg.ServerNames)
+	}
+	if !cfg.ShortIds[[8]byte{}] {
+		t.Fatalf("empty shortId was not allowed: %#v", cfg.ShortIds)
+	}
+	var shortID [8]byte
+	copy(shortID[:], []byte{0x0a, 0x1b})
+	if !cfg.ShortIds[shortID] {
+		t.Fatalf("shortId 0a1b was not allowed: %#v", cfg.ShortIds)
+	}
+}
+
+func TestVisionConnRoundTrip(t *testing.T) {
+	left, right := net.Pipe()
+	defer func() {
+		if err := left.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close left: %v", err)
+		}
+	}()
+	defer func() {
+		if err := right.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close right: %v", err)
+		}
+	}()
+
+	uuid, err := parseUUIDToken("11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := newVisionConn(left, uuid, nil)
+	reader := newVisionConn(right, uuid, nil)
+	writeErr := make(chan error, 1)
+	go func() {
+		if err := writer.WriteInitialPadding(); err != nil {
+			writeErr <- err
+			return
+		}
+		if _, err := writer.Write([]byte("hello")); err != nil {
+			writeErr <- err
+			return
+		}
+		writeErr <- nil
+	}()
+
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "hello" {
+		t.Fatalf("decoded = %q, want hello", buf)
+	}
+	select {
+	case err := <-writeErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("vision writer did not finish")
+	}
+}
+
+func TestParseRealityShortID(t *testing.T) {
+	got, err := parseRealityShortID("0a1b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, []byte{0x0a, 0x1b}) {
+		t.Fatalf("shortId = %x, want 0a1b", got)
+	}
+	if _, err := parseRealityShortID("abc"); err == nil {
+		t.Fatal("parseRealityShortID accepted odd-length hex")
 	}
 }

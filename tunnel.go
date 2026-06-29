@@ -79,8 +79,17 @@ func runRawTunnelServer(ctx context.Context, cfg config, log io.Writer) error {
 		}
 	}()
 
+	var reality *realityServer
+	if cfg.TunnelSecurity == tunnelSecurityReality {
+		reality, err = newRealityServer(cfg)
+		if err != nil {
+			return err
+		}
+	}
+
 	server := &proxyServer{
-		cfg: cfg,
+		cfg:     cfg,
+		reality: reality,
 		dialer: net.Dialer{
 			Timeout:   cfg.DialTimeout,
 			KeepAlive: 30 * time.Second,
@@ -158,8 +167,18 @@ func (s *proxyServer) handleTunnelConnError(ctx context.Context, conn net.Conn) 
 	if err := tuneTCP(conn); err != nil {
 		return fmt.Errorf("tune tunnel client tcp: %w", err)
 	}
+	if s.reality != nil {
+		realityConn, err := s.reality.accept(ctx, conn)
+		if err != nil {
+			return err
+		}
+		conn = realityConn
+	}
 
 	reader := bufio.NewReader(conn)
+	if s.cfg.TunnelProtocol != tunnelProtocolCustom {
+		return s.handleProtocolTunnelConn(ctx, conn, reader)
+	}
 	req, err := readTunnelRequest(reader)
 	if err != nil {
 		return err
@@ -374,6 +393,9 @@ func (s *proxyServer) tunnelUDPRemoteToClient(ctx context.Context, conn net.Conn
 }
 
 func (s *proxyServer) connectViaTunnelTCP(ctx context.Context, req socksRequest) (net.Conn, string, error) {
+	if s.cfg.TunnelProtocol != tunnelProtocolCustom {
+		return s.connectViaProtocolTunnelTCP(ctx, req)
+	}
 	target := s.cfg.ServerAddr
 	conn, err := s.openTunnelConn(ctx)
 	if err != nil {
@@ -397,6 +419,9 @@ func (s *proxyServer) connectViaTunnelTCP(ctx context.Context, req socksRequest)
 }
 
 func (s *proxyServer) connectViaTunnelUDP(ctx context.Context) (*customUDPUpstream, error) {
+	if s.cfg.TunnelProtocol != tunnelProtocolCustom {
+		return nil, fmt.Errorf("UDP tunnel is unsupported for %s protocol", s.cfg.TunnelProtocol)
+	}
 	target := s.cfg.ServerAddr
 	conn, err := s.openTunnelConn(ctx)
 	if err != nil {
