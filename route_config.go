@@ -13,6 +13,7 @@ import (
 
 type routeConfigFile struct {
 	Mode                string              `json:"mode,omitempty"`
+	ListenAddr          string              `json:"listen_addr,omitempty"`
 	ServerAddr          string              `json:"server_addr,omitempty"`
 	Token               string              `json:"token,omitempty"`
 	TunnelProtocol      string              `json:"tunnel_protocol,omitempty"`
@@ -107,6 +108,9 @@ func applyRuntimeConfigDefaults(cfg *config) error {
 	}
 	if strings.TrimSpace(cfg.Mode) == "" {
 		cfg.Mode = fileCfg.Mode
+	}
+	if strings.TrimSpace(fileCfg.ListenAddr) != "" && (strings.TrimSpace(cfg.ListenAddr) == "" || cfg.ListenAddr == DefaultConfig().ListenAddr) {
+		cfg.ListenAddr = fileCfg.ListenAddr
 	}
 	if strings.TrimSpace(cfg.ServerAddr) == "" {
 		cfg.ServerAddr = fileCfg.ServerAddr

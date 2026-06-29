@@ -505,6 +505,7 @@ func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	configBody := []byte(`{
 		"mode": "client",
+		"listen_addr": "127.0.0.1:19080",
 		"server_addr": "203.0.113.10:9443",
 		"token": "secret",
 		"tunnel_protocol": "vless",
@@ -521,6 +522,9 @@ func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
 	}
 	if cfg.Mode != proxyModeClient {
 		t.Fatalf("mode = %q, want %q", cfg.Mode, proxyModeClient)
+	}
+	if cfg.ListenAddr != "127.0.0.1:19080" {
+		t.Fatalf("listen addr = %q", cfg.ListenAddr)
 	}
 	if cfg.ServerAddr != "203.0.113.10:9443" {
 		t.Fatalf("server addr = %q", cfg.ServerAddr)

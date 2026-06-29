@@ -233,11 +233,21 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 `proxy client` 保持本地 mixed 代理入口，但会把已解析出目标的 TCP 和 UDP 上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
 
+`proxy config` 用于生成可直接编辑的 JSON 配置文件，不会启动代理。默认同时写出 `server.json` 和 `client.json`，两端共享同一个自动生成的 token，并支持通过 `--protocol custom|vless|vmess|trojan` 指定协议。
+
+```sh
+bin/proxy config --protocol custom --server-addr proxy.example.com:9443
+bin/proxy config --protocol vmess --server-addr proxy.example.com:9443
+bin/proxy config --protocol trojan --transport raw --tls --tls-cert server.crt --tls-key server.key --tls-server-name proxy.example.com
+bin/proxy config --target client --output client.json --protocol vless --server-addr proxy.example.com:9443
+```
+
 子命令别名：
 
 - `proxy local`：`proxy l`、`proxy loc`
 - `proxy client`：`proxy c`、`proxy cli`
 - `proxy server`：`proxy s`、`proxy srv`
+- `proxy config`：`proxy cfg`、`proxy gen`
 - `proxy version`：`proxy v`、`proxy ver`
 
 隧道承载层可通过 `--transport` 或 `config.json` 里的 `tunnel_transport` 选择：
@@ -299,6 +309,7 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
 ```json
 {
   "mode": "local",
+  "listen_addr": "127.0.0.1:1080",
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
@@ -336,6 +347,7 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
 规则说明：
 
 - `mode`：不带子命令运行 `proxy` 时使用的运行模式。支持 `local`、`client` 和 `server`。
+- `listen_addr`：未显式传入 `--listen` 时，local、client 或 server 模式使用的监听地址。
 - `domains`：精确匹配主机名。
 - `domain_prefixes`：匹配以指定值开头的主机名。
 - `domain_suffixes`：匹配该域名本身及其子域名。

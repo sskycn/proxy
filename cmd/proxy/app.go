@@ -60,7 +60,7 @@ func buildApp() *cmd.App {
 			return proxypkg.RunProxy(ctx, cfg, os.Stderr)
 		},
 	}
-	app.AddCommands(buildLocalCommand(&cfg, &upstreamProtocolFlag), buildClientCommand(&cfg), buildServerCommand(&cfg), buildVersionCommand())
+	app.AddCommands(buildLocalCommand(&cfg, &upstreamProtocolFlag), buildClientCommand(&cfg), buildServerCommand(&cfg), buildConfigCommand(), buildVersionCommand())
 
 	return app
 }

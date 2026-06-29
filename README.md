@@ -233,11 +233,21 @@ Running `proxy` without a subcommand defaults to local mode. If `config.json` co
 
 `proxy client` keeps the local mixed proxy listener, but upstream TCP and UDP traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
 
+`proxy config` generates ready-to-edit JSON config files without starting the proxy. By default it writes both `server.json` and `client.json`, shares one generated token between them, and accepts `--protocol custom|vless|vmess|trojan`.
+
+```sh
+bin/proxy config --protocol custom --server-addr proxy.example.com:9443
+bin/proxy config --protocol vmess --server-addr proxy.example.com:9443
+bin/proxy config --protocol trojan --transport raw --tls --tls-cert server.crt --tls-key server.key --tls-server-name proxy.example.com
+bin/proxy config --target client --output client.json --protocol vless --server-addr proxy.example.com:9443
+```
+
 Subcommand aliases:
 
 - `proxy local`: `proxy l`, `proxy loc`
 - `proxy client`: `proxy c`, `proxy cli`
 - `proxy server`: `proxy s`, `proxy srv`
+- `proxy config`: `proxy cfg`, `proxy gen`
 - `proxy version`: `proxy v`, `proxy ver`
 
 The tunnel transport is selected with `--transport` or `tunnel_transport` in `config.json`:
@@ -299,6 +309,7 @@ Example:
 ```json
 {
   "mode": "local",
+  "listen_addr": "127.0.0.1:1080",
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
@@ -336,6 +347,7 @@ Example:
 Rule behavior:
 
 - `mode`: runtime mode used when `proxy` is started without a subcommand. Supported values are `local`, `client`, and `server`.
+- `listen_addr`: listen address used by local, client, or server mode when no explicit `--listen` flag overrides it.
 - `domains`: exact host match.
 - `domain_prefixes`: host starts with the configured value.
 - `domain_suffixes`: matches the domain itself and its subdomains.
