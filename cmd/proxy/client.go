@@ -33,6 +33,7 @@ func buildClientCommand(cfg *proxypkg.Config) *cmd.Command {
 			f.BoolVar(&cfg.TunnelTLS, "tls", cfg.TunnelTLS, "use TLS for ws/h2 transport", "")
 			f.StringVar(&tlsServerNameFlag, "tls-server-name", tlsServerNameFlag, "TLS server name override", "")
 			f.BoolVar(&cfg.TunnelTLSInsecure, "tls-insecure", cfg.TunnelTLSInsecure, "skip TLS certificate verification", "")
+			f.BoolVar(&cfg.TunnelMux, "mux", cfg.TunnelMux, "enable tunnel multiplexing", "")
 		},
 		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
 			if len(args) != 0 {

@@ -22,6 +22,7 @@ type routeConfigFile struct {
 	TunnelTLSKey        string              `json:"tunnel_tls_key,omitempty"`
 	TunnelTLSServerName string              `json:"tunnel_tls_server_name,omitempty"`
 	TunnelTLSInsecure   bool                `json:"tunnel_tls_insecure,omitempty"`
+	TunnelMux           *bool               `json:"tunnel_mux,omitempty"`
 	UpstreamProtocol    string              `json:"upstream_protocol,omitempty"`
 	ForceUpstream       forceUpstreamConfig `json:"force_upstream"`
 }
@@ -121,6 +122,9 @@ func applyRuntimeConfigDefaults(cfg *config) error {
 	}
 	if !cfg.TunnelTLSInsecure {
 		cfg.TunnelTLSInsecure = fileCfg.TunnelTLSInsecure
+	}
+	if fileCfg.TunnelMux != nil {
+		cfg.TunnelMux = *fileCfg.TunnelMux
 	}
 	if strings.TrimSpace(cfg.UpstreamProtocol) == "" {
 		cfg.UpstreamProtocol = fileCfg.UpstreamProtocol

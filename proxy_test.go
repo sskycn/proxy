@@ -1650,6 +1650,7 @@ func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
 					Token:           "secret",
 					TunnelTransport: transport,
 					TunnelPath:      "/tunnel",
+					TunnelMux:       true,
 					DialTimeout:     time.Second,
 					BufferSize:      4096,
 				}, io.Discard)
@@ -1678,6 +1679,7 @@ func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
 					Token:           "secret",
 					TunnelTransport: transport,
 					TunnelPath:      "/tunnel",
+					TunnelMux:       true,
 					ConfigPath:      configPath,
 					DialTimeout:     time.Second,
 					BufferSize:      4096,
@@ -1740,6 +1742,7 @@ func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
 					Token:           "secret",
 					TunnelTransport: transport,
 					TunnelPath:      "/tunnel",
+					TunnelMux:       true,
 					DialTimeout:     time.Second,
 					BufferSize:      4096,
 				}, io.Discard)
@@ -1768,6 +1771,7 @@ func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
 					Token:           "secret",
 					TunnelTransport: transport,
 					TunnelPath:      "/tunnel",
+					TunnelMux:       true,
 					ConfigPath:      configPath,
 					DialTimeout:     time.Second,
 					BufferSize:      4096,

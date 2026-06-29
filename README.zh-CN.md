@@ -14,6 +14,7 @@
 - 默认使用 SOCKS5 作为上游协议，也支持 `mixed` 上游模式。
 - 支持 `proxy`、`proxy client`、`proxy server` 三种命令形态，并带一个轻量自定义隧道协议。
 - client/server 隧道可承载在 raw TCP、WebSocket、HTTP/2 或 HTTP/3 transport 上。
+- client/server 隧道默认启用多路复用，多条 TCP 连接和 UDP relay 可以共享同一条上游 tunnel transport 连接。
 - 支持 SOCKS5 UDP ASSOCIATE，可转发 UDP 流量。
 - 在终端输出紧凑访问日志；直连日志会省略代理字段。
 - 自动发现默认网关 IP。
@@ -170,6 +171,8 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 自定义隧道刻意保持很小，目前承载 TCP 流和 SOCKS5 UDP 数据包，不兼容 VLESS。
 
+隧道多路复用默认开启。开启后，`proxy client` 会维持一条到 `proxy server` 的共享 tunnel transport 连接，并为每条被代理的 TCP 连接或 UDP relay 打开一个逻辑 stream。这样可以减少 WebSocket/HTTP/2/HTTP/3 握手次数，也更适合放在 HTTP/CDN 基础设施后面。使用 `--mux=false` 或 `"tunnel_mux": false` 可以退回到每条代理流量使用一条 tunnel transport 连接。
+
 ### nginx WebSocket 示例
 
 服务端监听在本机回环地址：
@@ -212,6 +215,7 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
   "tunnel_tls": false,
   "tunnel_tls_server_name": "",
   "tunnel_tls_insecure": false,
+  "tunnel_mux": true,
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
     "domain_prefixes": ["api.", "pbs.twimg."],
@@ -273,6 +277,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 --tls                       ws/h2 transport 使用 TLS
 --tls-server-name <string>  TLS server name 覆盖值
 --tls-insecure              跳过 TLS 证书校验
+--mux <bool>                启用隧道多路复用 [默认: true]
 ```
 
 `proxy server` 额外支持：
@@ -283,6 +288,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 --tunnel-path <string>      HTTP/WebSocket 隧道路由路径 [默认: /proxy]
 --tls-cert <string>         h2/h3 服务端 TLS 证书文件
 --tls-key <string>          h2/h3 服务端 TLS 私钥文件
+--mux <bool>                启用隧道多路复用 [默认: true]
 ```
 
 ## Make 命令
@@ -307,6 +313,7 @@ make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=/proxy TLS=1 TOKEN=change-me
+make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me
 ```
 
 `MODE=server` 和 `MODE=client` 是 Makefile 快捷入口，会分别运行 `proxy server` 和 `proxy client`。

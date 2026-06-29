@@ -14,6 +14,7 @@ English | [简体中文](README.zh-CN.md)
 - Uses SOCKS5 for upstream traffic by default; `mixed` upstream mode is also supported.
 - Supports `proxy`, `proxy client`, and `proxy server` commands with a compact custom tunnel protocol.
 - Carries the client/server tunnel over raw TCP, WebSocket, HTTP/2, or HTTP/3 transport.
+- Multiplexes client/server tunnel streams by default, so many TCP connections and UDP relays can share one upstream tunnel transport connection.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
 - Prints compact terminal access logs; direct connections omit the proxy field.
 - Auto-detects the default gateway IP.
@@ -170,6 +171,8 @@ The tunnel transport is selected with `--transport` or `tunnel_transport` in `co
 
 The custom tunnel is intentionally small and currently carries TCP streams and SOCKS5 UDP packets. It is not VLESS-compatible.
 
+Tunnel multiplexing is enabled by default. With multiplexing enabled, `proxy client` keeps a shared tunnel transport connection to `proxy server`, then opens one logical stream for each proxied TCP connection or UDP relay. This reduces WebSocket/HTTP/2/HTTP/3 handshakes and works better behind HTTP/CDN infrastructure. Use `--mux=false` or `"tunnel_mux": false` to fall back to one tunnel transport connection per proxied stream.
+
 ### nginx WebSocket Example
 
 For nginx HTTP reverse proxy, run the server on loopback:
@@ -212,6 +215,7 @@ Example:
   "tunnel_tls": false,
   "tunnel_tls_server_name": "",
   "tunnel_tls_insecure": false,
+  "tunnel_mux": true,
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
     "domain_prefixes": ["api.", "pbs.twimg."],
@@ -273,6 +277,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 --tls                       use TLS for ws/h2 transport
 --tls-server-name <string>  TLS server name override
 --tls-insecure              skip TLS certificate verification
+--mux <bool>                enable tunnel multiplexing [default: true]
 ```
 
 `proxy server` adds:
@@ -283,6 +288,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 --tunnel-path <string>      HTTP/WebSocket tunnel path [default: /proxy]
 --tls-cert <string>         TLS certificate file for h2/h3 server
 --tls-key <string>          TLS private key file for h2/h3 server
+--mux <bool>                enable tunnel multiplexing [default: true]
 ```
 
 ## Make Targets
@@ -307,6 +313,7 @@ make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=/proxy TLS=1 TOKEN=change-me
+make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me
 ```
 
 `MODE=server` and `MODE=client` are Makefile shortcuts that run `proxy server` and `proxy client`.

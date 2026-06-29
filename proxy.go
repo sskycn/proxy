@@ -53,6 +53,7 @@ type Config struct {
 	TunnelTLSKey        string
 	TunnelTLSServerName string
 	TunnelTLSInsecure   bool
+	TunnelMux           bool
 	GatewayIP           string
 	GatewayPort         int
 	UpstreamProtocol    string
@@ -77,6 +78,7 @@ func defaultConfig() Config {
 		Mode:             proxyModeLocal,
 		TunnelTransport:  tunnelTransportRaw,
 		TunnelPath:       "/proxy",
+		TunnelMux:        true,
 		GatewayPort:      1080,
 		UpstreamProtocol: upstreamProtocolSOCKS5,
 		ConfigPath:       "config.json",
@@ -96,6 +98,7 @@ type proxyServer struct {
 	routes     *routeRules
 	bufferPool sync.Pool
 	log        io.Writer
+	mux        tunnelMuxClient
 }
 
 type directCache struct {

@@ -28,6 +28,7 @@ func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
 			f.StringVar(&pathFlag, "tunnel-path", pathFlag, "HTTP/WebSocket tunnel path", "")
 			f.StringVar(&cfg.TunnelTLSCert, "tls-cert", cfg.TunnelTLSCert, "TLS certificate file for h2/h3 server", "")
 			f.StringVar(&cfg.TunnelTLSKey, "tls-key", cfg.TunnelTLSKey, "TLS private key file for h2/h3 server", "")
+			f.BoolVar(&cfg.TunnelMux, "mux", cfg.TunnelMux, "enable tunnel multiplexing", "")
 		},
 		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
 			if len(args) != 0 {

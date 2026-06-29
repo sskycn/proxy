@@ -18,6 +18,7 @@ const (
 	tunnelVersion        = byte(0x01)
 	tunnelCmdTCPConnect  = byte(0x01)
 	tunnelCmdUDPRelay    = byte(0x02)
+	tunnelCmdMux         = byte(0x03)
 	tunnelStatusOK       = byte(0x00)
 	tunnelStatusError    = byte(0x01)
 	tunnelMaxTokenLength = 4096
@@ -175,8 +176,81 @@ func (s *proxyServer) handleTunnelConnError(ctx context.Context, conn net.Conn) 
 		return s.handleTunnelTCP(ctx, conn, reader, req)
 	case tunnelCmdUDPRelay:
 		return s.handleTunnelUDP(ctx, conn, reader)
+	case tunnelCmdMux:
+		return s.handleTunnelMux(ctx, conn, reader)
 	default:
 		if writeErr := writeTunnelResponse(conn, tunnelStatusError, errTunnelUnsupported.Error()); writeErr != nil {
+			return errors.Join(errTunnelUnsupported, writeErr)
+		}
+		return errTunnelUnsupported
+	}
+}
+
+func (s *proxyServer) handleTunnelMux(ctx context.Context, conn net.Conn, reader *bufio.Reader) error {
+	if err := writeTunnelResponse(conn, tunnelStatusOK, ""); err != nil {
+		return err
+	}
+	session := newMuxSession(conn, reader, false)
+	var wg sync.WaitGroup
+	defer func() {
+		wg.Wait()
+		if err := session.Close(); err != nil && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+			if logErr := logf(s.log, "close mux session %s: %v\n", conn.RemoteAddr(), err); logErr != nil {
+				return
+			}
+		}
+	}()
+	for {
+		stream, err := session.accept(ctx)
+		if err != nil {
+			if errors.Is(err, errMuxClosed) || errors.Is(err, io.EOF) || ctx.Err() != nil || isExpectedNetworkClose(err) {
+				return nil
+			}
+			return err
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.handleTunnelMuxStream(ctx, stream)
+		}()
+	}
+}
+
+func (s *proxyServer) handleTunnelMuxStream(ctx context.Context, stream net.Conn) {
+	if err := s.handleTunnelMuxStreamError(ctx, stream); err != nil && s.cfg.Verbose {
+		if logErr := logf(s.log, "mux stream error for %s: %v\n", stream.RemoteAddr(), err); logErr != nil {
+			return
+		}
+	}
+}
+
+func (s *proxyServer) handleTunnelMuxStreamError(ctx context.Context, stream net.Conn) error {
+	defer func() {
+		if err := stream.Close(); err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, errMuxClosed) {
+			if logErr := logf(s.log, "close mux stream %s: %v\n", stream.RemoteAddr(), err); logErr != nil {
+				return
+			}
+		}
+	}()
+
+	reader := bufio.NewReader(stream)
+	req, err := readTunnelRequest(reader)
+	if err != nil {
+		return err
+	}
+	if !tokenMatches(s.cfg.Token, req.token) {
+		if writeErr := writeTunnelResponse(stream, tunnelStatusError, errTunnelUnauthorized.Error()); writeErr != nil {
+			return errors.Join(errTunnelUnauthorized, writeErr)
+		}
+		return errTunnelUnauthorized
+	}
+	switch req.cmd {
+	case tunnelCmdTCPConnect:
+		return s.handleTunnelTCP(ctx, stream, reader, req)
+	case tunnelCmdUDPRelay:
+		return s.handleTunnelUDP(ctx, stream, reader)
+	default:
+		if writeErr := writeTunnelResponse(stream, tunnelStatusError, errTunnelUnsupported.Error()); writeErr != nil {
 			return errors.Join(errTunnelUnsupported, writeErr)
 		}
 		return errTunnelUnsupported
@@ -300,7 +374,7 @@ func (s *proxyServer) tunnelUDPRemoteToClient(ctx context.Context, conn net.Conn
 
 func (s *proxyServer) connectViaTunnelTCP(ctx context.Context, req socksRequest) (net.Conn, string, error) {
 	target := s.cfg.ServerAddr
-	conn, err := s.dialTunnelTransport(ctx)
+	conn, err := s.openTunnelConn(ctx)
 	if err != nil {
 		return nil, target, err
 	}
@@ -315,7 +389,7 @@ func (s *proxyServer) connectViaTunnelTCP(ctx context.Context, req socksRequest)
 	}); err != nil {
 		return nil, target, closeAfterError(conn, err)
 	}
-	if err := readTunnelResponse(bufio.NewReader(conn)); err != nil {
+	if err := readTunnelResponse(conn); err != nil {
 		return nil, target, closeAfterError(conn, err)
 	}
 	return conn, target, nil
@@ -323,7 +397,7 @@ func (s *proxyServer) connectViaTunnelTCP(ctx context.Context, req socksRequest)
 
 func (s *proxyServer) connectViaTunnelUDP(ctx context.Context) (*customUDPUpstream, error) {
 	target := s.cfg.ServerAddr
-	conn, err := s.dialTunnelTransport(ctx)
+	conn, err := s.openTunnelConn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -341,6 +415,90 @@ func (s *proxyServer) connectViaTunnelUDP(ctx context.Context) (*customUDPUpstre
 		return nil, closeAfterError(conn, err)
 	}
 	return &customUDPUpstream{tcp: conn, reader: reader, label: target}, nil
+}
+
+func (s *proxyServer) openTunnelConn(ctx context.Context) (net.Conn, error) {
+	if !s.cfg.TunnelMux {
+		return s.dialTunnelTransport(ctx)
+	}
+	conn, err := s.openTunnelMuxStream(ctx)
+	if err == nil {
+		return conn, nil
+	}
+	if s.cfg.Verbose {
+		if logErr := logf(s.log, "open mux stream failed: %v; falling back to single tunnel connection\n", err); logErr != nil {
+			return nil, errors.Join(err, logErr)
+		}
+	}
+	return s.dialTunnelTransport(ctx)
+}
+
+type tunnelMuxClient struct {
+	mu      sync.Mutex
+	session *muxSession
+}
+
+func (s *proxyServer) openTunnelMuxStream(ctx context.Context) (net.Conn, error) {
+	session, err := s.tunnelMuxSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := session.openStream(ctx)
+	if err == nil {
+		return stream, nil
+	}
+	s.resetTunnelMuxSession(session)
+	session, err = s.tunnelMuxSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return session.openStream(ctx)
+}
+
+func (s *proxyServer) tunnelMuxSession(ctx context.Context) (*muxSession, error) {
+	s.mux.mu.Lock()
+	defer s.mux.mu.Unlock()
+	if s.mux.session != nil {
+		select {
+		case <-s.mux.session.done:
+			s.mux.session = nil
+		default:
+			return s.mux.session, nil
+		}
+	}
+
+	conn, err := s.dialTunnelTransport(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tuneTCP(conn); err != nil {
+		return nil, closeAfterError(conn, err)
+	}
+	reader := bufio.NewReader(conn)
+	if err := writeTunnelRequest(conn, tunnelRequest{
+		cmd:   tunnelCmdMux,
+		token: s.cfg.Token,
+	}); err != nil {
+		return nil, closeAfterError(conn, err)
+	}
+	if err := readTunnelResponse(reader); err != nil {
+		return nil, closeAfterError(conn, err)
+	}
+	s.mux.session = newMuxSession(conn, reader, true)
+	return s.mux.session, nil
+}
+
+func (s *proxyServer) resetTunnelMuxSession(session *muxSession) {
+	s.mux.mu.Lock()
+	defer s.mux.mu.Unlock()
+	if s.mux.session == session {
+		if err := session.Close(); err != nil && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+			if logErr := logf(s.log, "close failed mux session: %v\n", err); logErr != nil {
+				return
+			}
+		}
+		s.mux.session = nil
+	}
 }
 
 func writeTunnelRequest(w io.Writer, req tunnelRequest) error {
