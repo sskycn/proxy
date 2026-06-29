@@ -88,19 +88,44 @@ bin/proxy client --config /etc/proxy/client.json
 | `tunnel_security` | server/client | Extra security layer. Currently used for VLESS REALITY with value `reality`. |
 | `tunnel_flow` | server/client | VLESS flow, for example `xtls-rprx-vision`. |
 | `tunnel_mux` | server/client | Enables this project's tunnel multiplexing. Currently supported by `native`. |
+| `gateway_ip` | local | Upstream gateway IP. Leave empty to auto-discover only when the local machine has a private IPv4 address. |
+| `gateway_port` | local | Gateway proxy port. Defaults to `1080`. |
 | `upstream_protocol` | client/local | Upstream protocol used for parsed proxy traffic: `socks5` or `mixed`. |
 | `socks5_username` | client/local | Local SOCKS5 username. Setting username or password enables username/password auth for SOCKS5 clients. |
 | `socks5_password` | client/local | Local SOCKS5 password. |
 | `upstream_socks5_username` | local | Username used when dialing an upstream SOCKS5 gateway. |
 | `upstream_socks5_password` | local | Password used when dialing an upstream SOCKS5 gateway. |
+| `direct_probe_timeout` | client/local | Timeout used by direct-first probing before falling back upstream. Default is `500ms`; JSON accepts Go duration strings such as `"500ms"`. |
+| `dial_timeout` | server/client/local | TCP dial timeout for upstream, tunnel, and gateway checks. Default is `5s`. |
+| `refresh_interval` | local | Interval for checking local IPv4 changes. Gateway rediscovery only runs after local IPv4 changes. `0` disables refresh. |
+| `scan_timeout` | local | Per-IP timeout when scanning the local IPv4 network for a reachable gateway proxy. |
+| `scan_workers` | local | Parallel workers used during local IPv4 network scanning. |
+| `buffer_size` | server/client/local | Per-direction copy buffer size. Values below 4096 are raised to 4096. |
+| `verbose` | server/client/local | Enables debug logs. Access logs are printed regardless of this setting. |
 
 ## Route Fields
 
-Route fields live in `route.json`, not in `server.json`, `client.json`, or `config.json`.
+Route fields live in `route.json`, not in `server.json`, `client.json`, or `config.json`. `proxy config` writes an empty route file by default.
 
 | Field | Modes | Meaning |
 | --- | --- | --- |
-| `force_upstream` | client/local | Force-upstream routing rules by domain, domain regex, suffix, IP, CIDR, or IP range. |
+| `force_upstream.domains` | client/local | Exact normalized domain matches. Learned direct TCP failures for hostnames are added here unless another rule already covers them. |
+| `force_upstream.domain_regexes` | client/local | Go/RE2 regular expressions matched against the normalized lowercase host. |
+| `force_upstream.domain_suffixes` | client/local | Matches the suffix itself and all subdomains. Values are normalized, deduplicated, and sorted during write-back. |
+| `force_upstream.ips` | client/local | Exact IP matches. Learned direct TCP failures for IP targets are added here unless another rule already covers them. |
+| `force_upstream.ip_cidrs` | client/local | CIDR prefix matches. |
+| `force_upstream.ip_ranges` | client/local | Alias for CIDR-style ranges; parsed the same way as `ip_cidrs`. |
+
+Before exit, learned direct TCP failures are merged into `route.json` or the configured `--route-config` file. If more than three subdomains under the same registrable domain appear in `force_upstream.domains`, that registrable domain is promoted into `force_upstream.domain_suffixes` and the covered exact-domain entries are removed.
+
+## Direct-First Fallback
+
+For parsed TCP proxy traffic, force-upstream route rules win first. Otherwise the proxy tries a direct TCP connection before using the upstream.
+
+- Plain HTTP requests that normally have no request body must receive a first response byte within `direct_probe_timeout`.
+- HTTP CONNECT and SOCKS5 CONNECT wait for the client's first tunnel payload, send it to the direct target, and require a first response byte within `direct_probe_timeout`.
+- If probing fails, the target is marked upstream-only, the first payload is replayed to the upstream path, and later connections skip the direct attempt.
+- UDP uses a conservative rule: internal UDP targets go direct, other UDP targets go upstream.
 
 ## Transport Choices
 

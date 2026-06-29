@@ -88,19 +88,44 @@ bin/proxy client --config /etc/proxy/client.json
 | `tunnel_security` | server/client | 额外安全层。目前主要用于 VLESS REALITY，值为 `reality`。普通 TLS 不写在这里。 |
 | `tunnel_flow` | server/client | VLESS flow，例如 `xtls-rprx-vision`。 |
 | `tunnel_mux` | server/client | 是否开启本项目 tunnel 多路复用。当前只有 native 协议支持。 |
+| `gateway_ip` | local | 上游网关 IP。留空时仅在本机存在内网 IPv4 地址时自动发现。 |
+| `gateway_port` | local | 网关代理端口，默认 `1080`。 |
 | `upstream_protocol` | client/local | 走上游时使用的本地上游协议，支持 `socks5` 和 `mixed`。 |
 | `socks5_username` | client/local | 本地 SOCKS5 用户名。用户名或密码任一非空时，会对 SOCKS5 客户端启用 username/password 认证。 |
 | `socks5_password` | client/local | 本地 SOCKS5 密码。 |
 | `upstream_socks5_username` | local | 连接上游 SOCKS5 网关时使用的用户名。 |
 | `upstream_socks5_password` | local | 连接上游 SOCKS5 网关时使用的密码。 |
+| `direct_probe_timeout` | client/local | 直连优先探测的超时时间，超时后走上游。默认 `500ms`；JSON 中支持 `"500ms"` 这类 Go duration 字符串。 |
+| `dial_timeout` | server/client/local | TCP 拨号超时时间，用于上游、隧道和网关检测，默认 `5s`。 |
+| `refresh_interval` | local | 检查本机 IPv4 变化的间隔。只有本机 IPv4 变化后才重新发现网关。`0` 表示禁用刷新。 |
+| `scan_timeout` | local | 扫描本机 IPv4 网段时每个 IP 的探测超时。 |
+| `scan_workers` | local | 扫描本机 IPv4 网段时使用的并发 worker 数。 |
+| `buffer_size` | server/client/local | 每个方向的复制缓冲区大小；低于 4096 时会提升到 4096。 |
+| `verbose` | server/client/local | 是否输出调试日志。访问日志始终会输出。 |
 
 ## 路由配置字段
 
-路由字段写在 `route.json`，不写入 `server.json`、`client.json` 或 `config.json`。
+路由字段写在 `route.json`，不写入 `server.json`、`client.json` 或 `config.json`。`proxy config` 默认会写出一个空的路由文件。
 
 | 字段 | 适用模式 | 含义 |
 | --- | --- | --- |
-| `force_upstream` | client/local | 强制走上游规则，支持域名、域名正则、域名后缀、IP、CIDR 和范围。 |
+| `force_upstream.domains` | client/local | 精确域名匹配。学习到的域名直连失败目标会写到这里，除非已有规则覆盖。 |
+| `force_upstream.domain_regexes` | client/local | Go/RE2 正则表达式，匹配规范化后的小写 host。 |
+| `force_upstream.domain_suffixes` | client/local | 匹配该后缀本身及所有子域名。写回时会规范化、去重和排序。 |
+| `force_upstream.ips` | client/local | 精确 IP 匹配。学习到的 IP 直连失败目标会写到这里，除非已有规则覆盖。 |
+| `force_upstream.ip_cidrs` | client/local | CIDR 前缀匹配。 |
+| `force_upstream.ip_ranges` | client/local | CIDR 风格范围的别名，解析方式与 `ip_cidrs` 相同。 |
+
+程序退出前会把学习到的 TCP 直连失败目标合并到 `route.json` 或 `--route-config` 指定文件。当同一可注册主域名下超过 3 个子域名出现在 `force_upstream.domains` 中时，程序会把该主域名提升到 `force_upstream.domain_suffixes`，并删除已被覆盖的精确域名记录。
+
+## 直连优先与快速失败
+
+对于可解析目标的 TCP 代理流量，强制走上游规则优先级最高。否则程序会先尝试直连，再按需走上游。
+
+- 普通 HTTP 且通常不带请求体的请求，需要在 `direct_probe_timeout` 内收到直连目标返回的首字节。
+- HTTP CONNECT 和 SOCKS5 CONNECT 会等待客户端首个隧道数据包，把它发给直连目标，并要求在 `direct_probe_timeout` 内收到直连目标返回的首字节。
+- 探测失败时，该目标会被标记为仅走上游，首个数据包会重放到上游路径，后续连接跳过直连尝试。
+- UDP 使用保守规则：内网 UDP 目标直连，其他 UDP 目标走上游。
 
 ## Transport 选择
 
