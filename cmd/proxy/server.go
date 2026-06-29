@@ -11,7 +11,7 @@ import (
 	"pkg.gostartkit.com/cmd"
 )
 
-func buildServerCommand(cfg *proxypkg.Config, configPathSet *bool) *cmd.Command {
+func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
 	tokenFlag := ""
 	protocolFlag := ""
 	transportFlag := ""
@@ -48,7 +48,7 @@ func buildServerCommand(cfg *proxypkg.Config, configPathSet *bool) *cmd.Command 
 				return fmt.Errorf("unexpected args: %v", args)
 			}
 			cfg.Mode = proxypkg.ProxyModeServer
-			applyModeConfigPathDefault(cfg, boolValue(configPathSet), "server.json")
+			applyModeConfigPathDefault(cfg, "server.json")
 			if cfg.ListenAddr == proxypkg.DefaultConfig().ListenAddr {
 				cfg.ListenAddr = ""
 			}
