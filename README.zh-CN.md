@@ -225,6 +225,8 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 ## Client/Server 子命令
 
+更详细的协议 startkit 文档在 [docs/startkit.md](docs/startkit.md)，并已按 `custom`、`vless`、`vmess`、`trojan` 拆成独立页面。
+
 不带子命令运行 `proxy` 时默认是 local 模式。如果 `config.json` 顶层写了 `"mode": "client"`、`"mode": "server"` 或 `"mode": "local"`，则会按配置里的模式启动。显式执行 `proxy local`、`proxy client` 或 `proxy server` 时，子命令优先于配置文件里的 mode。
 
 `proxy local` 会强制 local 模式：本地 mixed 代理通过发现到的网关代理转发，即使 `config.json` 里写了 `"mode": "client"` 或 `"mode": "server"`。

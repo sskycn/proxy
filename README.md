@@ -225,6 +225,8 @@ In `mixed` mode, HTTP proxy traffic and unknown mixed traffic are forwarded to t
 
 ## Client/Server Commands
 
+Detailed protocol startkit docs are available in [docs/startkit.md](docs/startkit.md), with separate pages for `custom`, `vless`, `vmess`, and `trojan`.
+
 Running `proxy` without a subcommand defaults to local mode. If `config.json` contains top-level `"mode": "client"`, `"mode": "server"`, or `"mode": "local"`, that mode is used instead. Explicit `proxy local`, `proxy client`, and `proxy server` subcommands always take priority over the config mode.
 
 `proxy local` forces local mode: the local mixed proxy forwards through the discovered gateway proxy, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
