@@ -11,7 +11,6 @@ import (
 	"errors"
 	"hash"
 	"hash/crc32"
-	"hash/fnv"
 	"io"
 	"math"
 	"net"
@@ -141,8 +140,8 @@ func writeVMessTCPRequest(w io.Writer, token string, host string, port uint16) (
 		return vmessSession{}, err
 	}
 	var session vmessSession
-	randomBytes := make([]byte, 33)
-	if _, err := io.ReadFull(rand.Reader, randomBytes); err != nil {
+	randomBytes := [33]byte{}
+	if _, err := io.ReadFull(rand.Reader, randomBytes[:]); err != nil {
 		return vmessSession{}, err
 	}
 	copy(session.requestBodyKey[:], randomBytes[:16])
@@ -200,11 +199,7 @@ func buildVMessRequestPayload(session vmessSession, host string, port uint16) ([
 	if appendErr != nil {
 		return nil, appendErr
 	}
-	hash := fnv.New32a()
-	if _, err := hash.Write(payload); err != nil {
-		return nil, err
-	}
-	checksum := hash.Sum32()
+	checksum := fnv32a(payload)
 	payload = append(payload, byte(checksum>>24), byte(checksum>>16), byte(checksum>>8), byte(checksum))
 	return payload, nil
 }
@@ -214,11 +209,7 @@ func parseVMessRequestPayload(payload []byte) (protocolTunnelRequest, error) {
 		return protocolTunnelRequest{}, io.ErrUnexpectedEOF
 	}
 	checksumStart := len(payload) - 4
-	hash := fnv.New32a()
-	if _, err := hash.Write(payload[:checksumStart]); err != nil {
-		return protocolTunnelRequest{}, err
-	}
-	actual := hash.Sum32()
+	actual := fnv32a(payload[:checksumStart])
 	expected := binary.BigEndian.Uint32(payload[checksumStart:])
 	if actual != expected {
 		return protocolTunnelRequest{}, errVMessInvalidChecksum
@@ -287,10 +278,7 @@ func writeVMessResponseHeader(w io.Writer, session vmessSession) error {
 	payloadNonce := vmessKDF(iv[:], vmessAEADRespHeaderPayloadIV)[:12]
 	payloadCipher := payloadAEAD.Seal(nil, payloadNonce, header, nil)
 
-	out := make([]byte, 0, len(lengthCipher)+len(payloadCipher))
-	out = append(out, lengthCipher...)
-	out = append(out, payloadCipher...)
-	return writeAll(w, out)
+	return writeBuffers(w, lengthCipher, payloadCipher)
 }
 
 func readVMessResponseHeader(reader io.Reader, session vmessSession) error {
@@ -330,6 +318,33 @@ func readVMessResponseHeader(reader io.Reader, session vmessSession) error {
 	}
 	if len(payload) < 4 || payload[0] != session.responseHeader {
 		return errProtocolInvalidResponse
+	}
+	return nil
+}
+
+func writeBuffers(w io.Writer, buffers ...[]byte) error {
+	if len(buffers) == 0 {
+		return nil
+	}
+	expected := int64(0)
+	for _, buffer := range buffers {
+		expected += int64(len(buffer))
+	}
+	if conn, ok := w.(net.Conn); ok {
+		netBuffers := net.Buffers(buffers)
+		written, err := netBuffers.WriteTo(conn)
+		if err != nil {
+			return err
+		}
+		if written != expected {
+			return io.ErrShortWrite
+		}
+		return nil
+	}
+	for _, buffer := range buffers {
+		if err := writeAll(w, buffer); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -412,7 +427,7 @@ func openVMessAEADHeader(key [16]byte, authID [16]byte, reader io.Reader) ([]byt
 }
 
 func createVMessAuthID(cmdKey [16]byte, timestamp int64) ([16]byte, error) {
-	buf := make([]byte, 16)
+	buf := [16]byte{}
 	binary.BigEndian.PutUint64(buf[:8], uint64(timestamp))
 	if _, err := io.ReadFull(rand.Reader, buf[8:12]); err != nil {
 		return [16]byte{}, err
@@ -424,7 +439,7 @@ func createVMessAuthID(cmdKey [16]byte, timestamp int64) ([16]byte, error) {
 		return [16]byte{}, err
 	}
 	var authID [16]byte
-	block.Encrypt(authID[:], buf)
+	block.Encrypt(authID[:], buf[:])
 	return authID, nil
 }
 
@@ -433,8 +448,8 @@ func verifyVMessAuthID(cmdKey [16]byte, authID [16]byte) error {
 	if err != nil {
 		return err
 	}
-	plain := make([]byte, 16)
-	block.Decrypt(plain, authID[:])
+	plain := [16]byte{}
+	block.Decrypt(plain[:], authID[:])
 	crc := binary.BigEndian.Uint32(plain[12:])
 	if crc != crc32.ChecksumIEEE(plain[:12]) {
 		return errProtocolUnauthorized
@@ -462,12 +477,8 @@ func vmessResponseKeyIV(session vmessSession) ([16]byte, [16]byte) {
 
 func vmessCmdKey(userID [16]byte) [16]byte {
 	hash := md5.New()
-	if _, err := hash.Write(userID[:]); err != nil {
-		panic(err)
-	}
-	if _, err := hash.Write([]byte(vmessCmdKeySalt)); err != nil {
-		panic(err)
-	}
+	_, _ = hash.Write(userID[:])
+	_, _ = hash.Write([]byte(vmessCmdKeySalt))
 	key := [16]byte{}
 	sum := hash.Sum(nil)
 	copy(key[:], sum)
@@ -493,6 +504,19 @@ func vmessKDF(key []byte, path ...string) []byte {
 	return hmacf.Sum(nil)
 }
 
+func fnv32a(data []byte) uint32 {
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	hash := uint32(offset32)
+	for _, b := range data {
+		hash ^= uint32(b)
+		hash *= prime32
+	}
+	return hash
+}
+
 func vmessKDF16(key []byte, path ...string) []byte {
 	sum := vmessKDF(key, path...)
 	return sum[:16]
@@ -511,9 +535,11 @@ func newAesGCM(key []byte) (cipher.AEAD, error) {
 }
 
 type vmessChunkReader struct {
-	reader io.Reader
-	shake  sha3.ShakeHash
-	buffer []byte
+	reader    io.Reader
+	shake     sha3.ShakeHash
+	remaining int
+	sizeBuf   [2]byte
+	maskBuf   [2]byte
 }
 
 func newVMessChunkReader(reader io.Reader, iv []byte, masked bool) *vmessChunkReader {
@@ -531,7 +557,10 @@ func newVMessChunkReader(reader io.Reader, iv []byte, masked bool) *vmessChunkRe
 }
 
 func (r *vmessChunkReader) Read(p []byte) (int, error) {
-	for len(r.buffer) == 0 {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for r.remaining == 0 {
 		size, err := r.readSize()
 		if err != nil {
 			return 0, err
@@ -539,36 +568,39 @@ func (r *vmessChunkReader) Read(p []byte) (int, error) {
 		if size == 0 {
 			return 0, io.EOF
 		}
-		r.buffer = make([]byte, int(size))
-		if _, err := io.ReadFull(r.reader, r.buffer); err != nil {
-			return 0, err
-		}
+		r.remaining = int(size)
 	}
-	n := copy(p, r.buffer)
-	r.buffer = r.buffer[n:]
+	if len(p) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := io.ReadFull(r.reader, p)
+	r.remaining -= n
+	if err != nil {
+		return n, err
+	}
 	return n, nil
 }
 
 func (r *vmessChunkReader) readSize() (uint16, error) {
-	sizeBuf := []byte{0x00, 0x00}
-	if _, err := io.ReadFull(r.reader, sizeBuf); err != nil {
+	if _, err := io.ReadFull(r.reader, r.sizeBuf[:]); err != nil {
 		return 0, err
 	}
-	size := binary.BigEndian.Uint16(sizeBuf)
+	size := binary.BigEndian.Uint16(r.sizeBuf[:])
 	if r.shake == nil {
 		return size, nil
 	}
-	maskBuf := []byte{0x00, 0x00}
-	if _, err := io.ReadFull(r.shake, maskBuf); err != nil {
+	if _, err := io.ReadFull(r.shake, r.maskBuf[:]); err != nil {
 		return 0, err
 	}
-	return size ^ binary.BigEndian.Uint16(maskBuf), nil
+	return size ^ binary.BigEndian.Uint16(r.maskBuf[:]), nil
 }
 
 type vmessChunkWriter struct {
 	conn   *vmessResponseConn
 	shake  sha3.ShakeHash
 	closed bool
+	size   [2]byte
+	mask   [2]byte
 }
 
 func newVMessChunkWriter(conn *vmessResponseConn, iv []byte, masked bool) *vmessChunkWriter {
@@ -613,37 +645,46 @@ func (w *vmessChunkWriter) WriteFinal() error {
 }
 
 func (w *vmessChunkWriter) writeChunk(p []byte) error {
-	if err := w.writeSize(uint16(len(p))); err != nil {
-		return err
-	}
-	n, err := w.conn.Conn.Write(p)
+	size, err := w.encodeSize(uint16(len(p)))
 	if err != nil {
 		return err
 	}
-	if n != len(p) {
+	buffers := net.Buffers{size, p}
+	written, err := buffers.WriteTo(w.conn.Conn)
+	if err != nil {
+		return err
+	}
+	if written != int64(len(size)+len(p)) {
 		return io.ErrShortWrite
 	}
 	return nil
 }
 
 func (w *vmessChunkWriter) writeSize(size uint16) error {
-	encoded := size
-	if w.shake != nil {
-		maskBuf := []byte{0x00, 0x00}
-		if _, err := io.ReadFull(w.shake, maskBuf); err != nil {
-			return err
-		}
-		encoded ^= binary.BigEndian.Uint16(maskBuf)
-	}
-	sizeBuf := []byte{byte(encoded >> 8), byte(encoded)}
-	n, err := w.conn.Conn.Write(sizeBuf)
+	encoded, err := w.encodeSize(size)
 	if err != nil {
 		return err
 	}
-	if n != len(sizeBuf) {
+	n, err := w.conn.Conn.Write(encoded)
+	if err != nil {
+		return err
+	}
+	if n != len(encoded) {
 		return io.ErrShortWrite
 	}
 	return nil
+}
+
+func (w *vmessChunkWriter) encodeSize(size uint16) ([]byte, error) {
+	encoded := size
+	if w.shake != nil {
+		if _, err := io.ReadFull(w.shake, w.mask[:]); err != nil {
+			return nil, err
+		}
+		encoded ^= binary.BigEndian.Uint16(w.mask[:])
+	}
+	binary.BigEndian.PutUint16(w.size[:], encoded)
+	return w.size[:], nil
 }
 
 func appendVMessAddress(dst []byte, host string) ([]byte, error) {
