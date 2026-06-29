@@ -196,12 +196,12 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 					}
 				}
 				if err := s.bridge(direct, client, reader); err != nil {
-					if logErr := accessLog(s.log, accessSource("http-connect", client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+					if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
 						return errors.Join(err, logErr)
 					}
 					return err
 				}
-				return accessLog(s.log, accessSource("http-connect", client.RemoteAddr()), "-", directTarget, "ok")
+				return accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, "ok")
 			}
 			rewritten, err := rewriteHTTPProxyRequest(req)
 			if err != nil {
@@ -232,11 +232,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 		}
 	}
 
-	protocol := "http"
-	if strings.EqualFold(req.method, "CONNECT") {
-		protocol = "http-connect"
-	}
-	return s.proxyViaUpstream(ctx, client, reader, req.raw, accessSource(protocol, client.RemoteAddr()), directTarget)
+	return s.proxyViaUpstream(ctx, client, reader, req.raw, accessSource("http", client.RemoteAddr()), directTarget)
 }
 
 func (s *proxyServer) connectDirectTCP(ctx context.Context, cacheKey string, host string, target string) (net.Conn, bool, error) {

@@ -138,7 +138,7 @@ UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiat
 The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The source includes the detected proxy protocol and a friendly local address. Proxied traffic includes the upstream proxy address; direct traffic omits that middle field. The final field is `ok` or the failure reason.
 
 ```text
-http-connect/localhost:53000 -> 10.207.20.78:1080 -> x.com:443 ok
+http/localhost:53000 -> 10.207.20.78:1080 -> x.com:443 ok
 socks5/localhost:53001 -> 192.168.1.10:80 ok
 socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 ```
