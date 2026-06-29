@@ -1,49 +1,49 @@
-# VLESS Protocol
+# VLESS 协议配置
 
-Chinese version: [protocol-vless.zh-CN.md](protocol-vless.zh-CN.md)
+English version: [protocol-vless.md](protocol-vless.md)
 
-`vless` provides VLESS-style TCP request framing. This project supports regular VLESS TCP and Xray-compatible REALITY/Vision mode.
+`vless` 用于 VLESS 风格的 TCP 请求封装。本项目支持普通 VLESS TCP，也支持 Xray REALITY/Vision 兼容模式。
 
-## Best For
+## 适用场景
 
-- Xray VLESS TCP compatibility.
-- REALITY/Vision deployments.
-- UUID-based user identity matching Xray `users[].id`.
+- 需要和 Xray VLESS TCP 配置兼容。
+- 需要使用 REALITY/Vision。
+- 希望 token 使用 UUID 形式，便于和 Xray 用户 id 对齐。
 
-## Capabilities
+## 能力和限制
 
-| Capability | Status |
+| 能力 | 状态 |
 | --- | --- |
-| TCP proxying | Supported |
-| SOCKS5 UDP relay | Not supported |
-| Tunnel multiplexing | Not supported |
-| raw/ws/h2/h3 transport | Supported |
-| TLS | Supported |
-| REALITY/Vision | Supported, raw transport only |
-| token format | UUID |
+| TCP 代理 | 支持 |
+| SOCKS5 UDP relay | 不支持 |
+| tunnel 多路复用 | 不支持 |
+| raw/ws/h2/h3 transport | 支持 |
+| TLS | 支持 |
+| REALITY/Vision | 支持，仅 raw transport |
+| token 格式 | UUID |
 
-## Important Fields
+## 关键字段含义
 
-| Field | Side | Meaning |
+| 字段 | 位置 | 含义 |
 | --- | --- | --- |
-| `tunnel_protocol: "vless"` | server/client | Enables VLESS framing. |
-| `token` | server/client | VLESS user id. Must be a UUID. |
-| `tunnel_transport` | server/client | Carrier transport. REALITY/Vision requires `raw`. |
-| `tunnel_security: "reality"` | server/client | Enables REALITY. Leave empty or `none` for regular VLESS. |
-| `tunnel_flow` | server/client | VLESS flow, usually `xtls-rprx-vision` for Vision. |
-| `reality_server_name` | client | REALITY serverName sent by the client. |
-| `reality_server_names` | server | Allowed REALITY serverName values. |
-| `reality_public_key` | client | REALITY public key. |
-| `reality_private_key` | server | REALITY private key. |
-| `reality_short_id` | client | Client shortId in hex, may be empty. |
-| `reality_short_ids` | server | Allowed shortId list, may include the empty value. |
-| `reality_fingerprint` | client | uTLS fingerprint, for example `chrome`. |
-| `reality_dest` | server | REALITY fallback destination in `host:port` form. |
-| `reality_spider_x` | client | Xray-compatible spiderX field, commonly `/`. |
+| `tunnel_protocol: "vless"` | server/client | 启用 VLESS 风格封装。 |
+| `token` | server/client | VLESS user id，必须是 UUID。 |
+| `tunnel_transport` | server/client | 承载层。REALITY/Vision 必须使用 `raw`。 |
+| `tunnel_security: "reality"` | server/client | 启用 REALITY。普通 VLESS 不设置或设置为 `none`。 |
+| `tunnel_flow` | server/client | Vision 常用 `xtls-rprx-vision`。 |
+| `reality_server_name` | client | client 发送的 REALITY serverName。 |
+| `reality_server_names` | server | server 允许的 serverName 列表，逗号分隔或 JSON 数组。 |
+| `reality_public_key` | client | REALITY public key。 |
+| `reality_private_key` | server | REALITY private key。 |
+| `reality_short_id` | client | client 使用的 shortId 十六进制字符串，可为空。 |
+| `reality_short_ids` | server | server 允许的 shortId 列表，可为空列表。 |
+| `reality_fingerprint` | client | uTLS fingerprint，例如 `chrome`。 |
+| `reality_dest` | server | REALITY fallback 目标，格式 `host:port`。 |
+| `reality_spider_x` | client | 兼容 Xray 配置字段，通常为 `/`。 |
 
-## Regular VLESS
+## 普通 VLESS 配置
 
-Generate:
+生成：
 
 ```sh
 bin/proxy config --protocol vless --server-addr proxy.example.com:9443
@@ -93,18 +93,18 @@ client:
 }
 ```
 
-## VLESS REALITY/Vision
+## VLESS REALITY/Vision 配置
 
-Requirements:
+REALITY/Vision 要求：
 
-- `tunnel_protocol` is `vless`.
-- `tunnel_transport` is `raw`.
-- `tunnel_security` is `reality`.
-- `tunnel_tls` is disabled.
-- `token` is a UUID.
-- Client and server REALITY key, serverName, shortId, and flow settings match.
+- `tunnel_protocol` 为 `vless`。
+- `tunnel_transport` 为 `raw`。
+- `tunnel_security` 为 `reality`。
+- 不能同时启用 `tunnel_tls`。
+- `token` 必须是 UUID。
+- client 和 server 的 REALITY key、serverName、shortId、flow 必须匹配。
 
-Generate:
+生成示例：
 
 ```sh
 bin/proxy config \
@@ -170,9 +170,9 @@ client:
 }
 ```
 
-## Xray Field Mapping
+## 和 Xray 配置对应关系
 
-| Xray field | Project field |
+| Xray 字段 | 本项目字段 |
 | --- | --- |
 | `protocol: "vless"` | `tunnel_protocol: "vless"` |
 | `users[].id` | `token` |
@@ -189,11 +189,11 @@ client:
 | `realitySettings.fingerprint` | client `reality_fingerprint` |
 | `realitySettings.spiderX` | client `reality_spider_x` |
 
-## Run
+## 运行
 
 ```sh
 bin/proxy server
 bin/proxy client
 ```
 
-VLESS currently carries TCP only. Use `custom` when you need UDP relay or tunnel mux.
+本项目的 VLESS 当前只承载 TCP。需要 UDP relay 或 tunnel mux 时请选择 `custom` 协议。

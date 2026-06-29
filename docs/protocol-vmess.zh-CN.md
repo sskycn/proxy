@@ -1,61 +1,61 @@
-# VMess Protocol
+# VMess 协议配置
 
-Chinese version: [protocol-vmess.zh-CN.md](protocol-vmess.zh-CN.md)
+English version: [protocol-vmess.md](protocol-vmess.md)
 
-`vmess` provides Xray-compatible VMess AEAD TCP request framing. It is useful when you need to interoperate with VMess AEAD TCP, but it is not the most feature-complete protocol in this project.
+`vmess` 用于兼容 Xray VMess AEAD TCP 请求封装。它适合需要对接 VMess AEAD TCP 的场景，但不是本项目功能最完整的协议。
 
-## Best For
+## 适用场景
 
-- Xray VMess AEAD TCP compatibility.
-- UUID-based VMess user id.
-- Peers configured with `security: "none"`.
+- 需要与 Xray VMess AEAD TCP 配置互通。
+- 对端 VMess 用户 id 是 UUID。
+- 对端使用 `security: "none"`。
 
-## Capabilities
+## 能力和限制
 
-| Capability | Status |
+| 能力 | 状态 |
 | --- | --- |
-| TCP proxying | Supported |
-| SOCKS5 UDP relay | Not supported |
-| Tunnel multiplexing | Not supported |
-| raw/ws/h2/h3 transport | Supported |
-| TLS | Supported |
-| REALITY/Vision | Not supported |
-| token format | UUID |
-| VMess body security | `none` only |
+| TCP 代理 | 支持 |
+| SOCKS5 UDP relay | 不支持 |
+| tunnel 多路复用 | 不支持 |
+| raw/ws/h2/h3 transport | 支持 |
+| TLS | 支持 |
+| REALITY/Vision | 不支持 |
+| token 格式 | UUID |
+| VMess security | 仅 `none` |
 
-Supported compatibility target:
+当前兼容目标：
 
-- VMess AEAD header.
-- TCP command.
-- `security: "none"`.
-- Xray default chunk stream/chunk masking options.
+- VMess AEAD header。
+- TCP command。
+- `security: "none"`。
+- 支持 Xray 默认 chunk stream/chunk masking 相关选项。
 
-Not supported:
+当前不支持：
 
-- VMess UDP.
-- AES-GCM or ChaCha20-Poly1305 body security.
-- VMess mux command.
-- Global padding.
-- Authenticated length.
+- VMess UDP。
+- AES-GCM 或 ChaCha20-Poly1305 body security。
+- VMess mux command。
+- global padding。
+- authenticated length。
 
-## Important Fields
+## 关键字段含义
 
-| Field | Side | Meaning |
+| 字段 | 位置 | 含义 |
 | --- | --- | --- |
-| `tunnel_protocol: "vmess"` | server/client | Enables VMess AEAD TCP framing. |
-| `token` | server/client | VMess user id. Must be a UUID. |
-| `tunnel_transport` | server/client | Carrier transport: `raw`, `ws`, `h2`, or `h3`. |
-| `tunnel_tls` | client | Enables TLS from client to server. |
-| `tunnel_tls_cert` / `tunnel_tls_key` | server | TLS certificate and private key. |
-| `tunnel_tls_server_name` | client | TLS SNI and certificate verification name. |
+| `tunnel_protocol: "vmess"` | server/client | 启用 VMess AEAD TCP 封装。 |
+| `token` | server/client | VMess user id，必须是 UUID。 |
+| `tunnel_transport` | server/client | 承载层，支持 `raw`、`ws`、`h2`、`h3`。 |
+| `tunnel_tls` | client | 是否用 TLS 连接服务端。 |
+| `tunnel_tls_cert` / `tunnel_tls_key` | server | TLS 证书和私钥。 |
+| `tunnel_tls_server_name` | client | TLS SNI 和证书校验名称。 |
 
-## Generate Configs
+## 生成配置
 
 ```sh
 bin/proxy config --protocol vmess --server-addr proxy.example.com:9443
 ```
 
-WebSocket + TLS:
+WebSocket + TLS：
 
 ```sh
 bin/proxy config \
@@ -67,7 +67,7 @@ bin/proxy config \
   --tls-server-name proxy.example.com
 ```
 
-## server.json
+## server.json 示例
 
 ```json
 {
@@ -88,7 +88,7 @@ bin/proxy config \
 }
 ```
 
-## client.json
+## client.json 示例
 
 ```json
 {
@@ -111,19 +111,19 @@ bin/proxy config \
 }
 ```
 
-## Xray Field Mapping
+## 和 Xray 配置对应关系
 
-| Xray field | Project field |
+| Xray 字段 | 本项目字段 |
 | --- | --- |
 | `protocol: "vmess"` | `tunnel_protocol: "vmess"` |
 | `users[].id` | `token` |
-| `users[].security: "none"` | The only supported VMess body security |
+| `users[].security: "none"` | 当前唯一支持的 VMess body security |
 | `streamSettings.network: "tcp"` | `tunnel_transport: "raw"` |
 | `streamSettings.network: "ws"` | `tunnel_transport: "ws"` |
 | `streamSettings.wsSettings.path` | `tunnel_path` |
-| `streamSettings.security: "tls"` | client `tunnel_tls: true`; server certificate and key |
+| `streamSettings.security: "tls"` | client `tunnel_tls: true`，server 配置证书和私钥 |
 
-## TLS Example
+## TLS 示例
 
 server:
 
@@ -154,11 +154,11 @@ client:
 }
 ```
 
-## Run
+## 运行
 
 ```sh
 bin/proxy server
 bin/proxy client
 ```
 
-Use `custom` when you need UDP relay or tunnel mux.
+如果需要 UDP relay 或 tunnel mux，请使用 `custom` 协议。

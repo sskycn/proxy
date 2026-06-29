@@ -1,53 +1,55 @@
-# Custom 协议配置
+# Custom Protocol
 
-`custom` 是本项目自定义的轻量隧道协议，也是默认协议。它面向本项目自己的 client/server 组合，重点是低开销、功能完整和实现可控。
+Chinese version: [protocol-custom.zh-CN.md](protocol-custom.zh-CN.md)
 
-## 适用场景
+`custom` is this project's native tunnel protocol and the default protocol. It is designed for project-owned client/server deployments where low overhead and full feature coverage matter more than compatibility with external proxy stacks.
 
-- client 和 server 都使用本项目程序。
-- 希望支持 TCP、SOCKS5 UDP relay 和 tunnel 多路复用。
-- 希望减少 WebSocket、HTTP/2、HTTP/3 场景下的握手成本。
-- 不需要兼容 Xray、V2Ray、Trojan-Go 等外部协议栈。
+## Best For
 
-## 能力和限制
+- Both client and server run this project.
+- You need TCP, SOCKS5 UDP relay, and tunnel multiplexing.
+- You want fewer transport handshakes over WebSocket, HTTP/2, or HTTP/3.
+- You do not need Xray, V2Ray, or Trojan compatibility.
 
-| 能力 | 状态 |
+## Capabilities
+
+| Capability | Status |
 | --- | --- |
-| TCP 代理 | 支持 |
-| SOCKS5 UDP relay | 支持 |
-| tunnel 多路复用 | 支持 |
-| raw/ws/h2/h3 transport | 支持 |
-| TLS | 支持 |
-| REALITY/Vision | 不支持 |
-| 外部 Xray 兼容 | 不适用 |
+| TCP proxying | Supported |
+| SOCKS5 UDP relay | Supported |
+| Tunnel multiplexing | Supported |
+| raw/ws/h2/h3 transport | Supported |
+| TLS | Supported |
+| REALITY/Vision | Not supported |
+| External Xray compatibility | Not applicable |
 
-## 关键字段含义
+## Important Fields
 
-| 字段 | 位置 | 含义 |
+| Field | Side | Meaning |
 | --- | --- | --- |
-| `tunnel_protocol: "custom"` | server/client | 启用本项目自定义协议。 |
-| `token` | server/client | 共享认证 token。server 配置为空时不强制认证；生产环境建议总是设置。 |
-| `tunnel_transport` | server/client | 承载层。默认 `raw`，也可使用 `ws`、`h2`、`h3`。 |
-| `tunnel_mux` | server/client | 是否开启多路复用。custom 默认建议开启。 |
-| `tunnel_path` | server/client | HTTP/WebSocket 类 transport 使用的路径。raw transport 可保留默认值。 |
-| `tunnel_tls` | client | client 是否使用 TLS 连接 server。 |
-| `tunnel_tls_cert` / `tunnel_tls_key` | server | server 侧 TLS 证书和私钥。 |
+| `tunnel_protocol: "custom"` | server/client | Enables the native protocol. |
+| `token` | server/client | Shared authentication token. Production deployments should always set it. |
+| `tunnel_transport` | server/client | Carrier transport. `raw` is the default and has the lowest overhead. |
+| `tunnel_mux` | server/client | Enables multiplexing. Recommended for `custom`. |
+| `tunnel_path` | server/client | Path used by WebSocket/HTTP transports. Raw transport can keep the default. |
+| `tunnel_tls` | client | Enables TLS from client to server. |
+| `tunnel_tls_cert` / `tunnel_tls_key` | server | TLS certificate and private key for the server. |
 
-## 生成配置
+## Generate Configs
 
-交互式生成：
+Interactive:
 
 ```sh
 bin/proxy config
 ```
 
-非交互生成：
+Non-interactive:
 
 ```sh
 bin/proxy config --protocol custom --server-addr proxy.example.com:9443
 ```
 
-使用 WebSocket transport：
+WebSocket over TLS:
 
 ```sh
 bin/proxy config \
@@ -59,7 +61,7 @@ bin/proxy config \
   --tls-server-name proxy.example.com
 ```
 
-## server.json 示例
+## server.json
 
 ```json
 {
@@ -81,7 +83,7 @@ bin/proxy config \
 }
 ```
 
-## client.json 示例
+## client.json
 
 ```json
 {
@@ -105,11 +107,9 @@ bin/proxy config \
 }
 ```
 
-## TLS 配置
+## TLS Example
 
-raw transport 也可以跑在 TLS 内：
-
-server:
+Server:
 
 ```json
 {
@@ -123,7 +123,7 @@ server:
 }
 ```
 
-client:
+Client:
 
 ```json
 {
@@ -138,24 +138,24 @@ client:
 }
 ```
 
-## 多路复用
+## Multiplexing
 
-`custom` 支持 tunnel mux。开启后，client 会维持一条到底层 transport 的共享连接，并为每条 TCP 连接或 UDP relay 开一个逻辑 stream。
+`custom` supports tunnel multiplexing. With mux enabled, the client keeps one shared tunnel transport connection and opens one logical stream per proxied TCP connection or UDP relay.
 
-建议：
+Recommendations:
 
-- `raw` 内网或稳定专线：开启 mux 可以减少连接数。
-- `ws`、`h2`、`h3` 经过代理/CDN：开启 mux 可以减少握手与 HTTP 层连接建立成本。
-- 如果排查问题或遇到中间网络对长连接不友好，可以临时设置 `"tunnel_mux": false`。
+- Keep mux enabled for WebSocket, HTTP/2, and HTTP/3 to reduce repeated handshakes.
+- Keep mux enabled for stable raw TCP deployments when you want fewer connections.
+- Set `"tunnel_mux": false` temporarily when diagnosing middlebox or long-lived connection issues.
 
-## 运行
+## Run
 
 ```sh
 bin/proxy server
 bin/proxy client
 ```
 
-客户端启动后，本地代理地址默认是：
+The default local proxy address is:
 
 ```text
 127.0.0.1:1080
