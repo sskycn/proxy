@@ -618,6 +618,10 @@ func logf(w io.Writer, format string, args ...any) error {
 func accessLog(w io.Writer, source string, proxy string, target string, status string) error {
 	status = strings.ReplaceAll(status, "\n", " ")
 	status = strings.ReplaceAll(status, "\r", " ")
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = "unknown"
+	}
 	if proxy == "" {
 		proxy = "-"
 	}
@@ -627,6 +631,21 @@ func accessLog(w io.Writer, source string, proxy string, target string, status s
 	}
 	_, err := fmt.Fprintf(w, "%s -> %s -> %s %s\n", source, proxy, target, status)
 	return err
+}
+
+func accessTarget(host string, port string) string {
+	host = trimHostBrackets(strings.TrimSpace(host))
+	port = strings.TrimSpace(port)
+	if host == "" {
+		if port == "" {
+			return "unknown"
+		}
+		return ":" + port
+	}
+	if port == "" {
+		return host
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func accessSource(protocol string, addr net.Addr) string {

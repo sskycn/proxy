@@ -609,12 +609,16 @@ func TestAccessLogIdentifiesRoute(t *testing.T) {
 	if err := accessLog(&buf, accessSource("socks5", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1236}), "10.0.0.1:1080", "example.com:443", "connect failed"); err != nil {
 		t.Fatal(err)
 	}
+	if err := accessLog(&buf, accessSource("httpc", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1237}), "-", accessTarget("Api.Service.Example.COM", "443"), "ok"); err != nil {
+		t.Fatal(err)
+	}
 
 	got := buf.String()
 	for _, want := range []string{
 		"http/localhost:1234 -> x.com:443 ok",
 		"httpc/localhost:1235 -> 10.0.0.1:1080 -> example.com:443 connect failed",
 		"socks5/localhost:1236 -> 10.0.0.1:1080 -> example.com:443 connect failed",
+		"httpc/localhost:1237 -> Api.Service.Example.COM:443 ok",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("access log = %q, missing %q", got, want)

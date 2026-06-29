@@ -117,6 +117,7 @@ func (s *proxyServer) handleSocks5(ctx context.Context, client net.Conn, reader 
 
 func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, reader *bufio.Reader, req socksRequest) error {
 	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
+	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
 	cacheKey := directCacheKey("tcp", req.host, strconv.Itoa(int(req.port)))
 	if !s.routes.shouldForceUpstream(req.host) {
 		direct, tried, err := s.connectDirectTCP(ctx, cacheKey, req.host, target)
@@ -136,12 +137,12 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 				}
 			}
 			if err := s.bridge(direct, client, reader); err != nil {
-				if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", target, err.Error()); logErr != nil {
+				if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
 			}
-			return accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", target, "ok")
+			return accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", logTarget, "ok")
 		}
 	} else if s.cfg.Verbose {
 		if err := logf(s.log, "force upstream socks %s\n", target); err != nil {
@@ -149,7 +150,7 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 		}
 	}
 
-	requestedTarget := target
+	requestedTarget := logTarget
 	upstream, target, err := s.connectViaUpstreamTCP(ctx, req)
 	if err != nil {
 		if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), target, requestedTarget, err.Error()); logErr != nil {
@@ -189,6 +190,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	}
 	targetHost := trimHostBrackets(host)
 	directTarget := net.JoinHostPort(targetHost, port)
+	logTarget := accessTarget(host, port)
 
 	cacheKey := directCacheKey("tcp", targetHost, port)
 	if !s.routes.shouldForceUpstream(targetHost) {
@@ -210,19 +212,19 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 					}
 				}
 				if err := s.bridge(direct, client, reader); err != nil {
-					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
 						return errors.Join(err, logErr)
 					}
 					return err
 				}
-				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, "ok")
+				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, "ok")
 			}
 			rewritten, err := rewriteHTTPProxyRequest(req)
 			if err != nil {
 				return err
 			}
 			if err := writeAll(direct, rewritten); err != nil {
-				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
@@ -233,12 +235,12 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 				}
 			}
 			if err := s.bridge(direct, client, reader); err != nil {
-				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
 			}
-			return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, "ok")
+			return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, "ok")
 		}
 	} else if s.cfg.Verbose {
 		if err := logf(s.log, "force upstream http %s\n", directTarget); err != nil {
@@ -247,9 +249,9 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	}
 
 	if s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
-		return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, directTarget)
+		return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, logTarget)
 	}
-	return s.handleHTTPUpstreamSocks5(ctx, client, reader, req, targetHost, port, directTarget)
+	return s.handleHTTPUpstreamSocks5(ctx, client, reader, req, targetHost, port, logTarget)
 }
 
 func (s *proxyServer) connectDirectTCP(ctx context.Context, cacheKey string, host string, target string) (net.Conn, bool, error) {

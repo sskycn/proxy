@@ -266,6 +266,7 @@ func (s *proxyServer) handleTunnelTCP(ctx context.Context, conn net.Conn, reader
 		return nil
 	}
 	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
+	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
 	outbound, err := s.dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		if writeErr := writeTunnelResponse(conn, tunnelStatusError, err.Error()); writeErr != nil {
@@ -284,12 +285,12 @@ func (s *proxyServer) handleTunnelTCP(ctx context.Context, conn net.Conn, reader
 		return err
 	}
 	if err := s.bridge(outbound, conn, reader); err != nil {
-		if logErr := accessLog(s.log, accessSource("tunnel", conn.RemoteAddr()), "-", target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource("tunnel", conn.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
 	}
-	return accessLog(s.log, accessSource("tunnel", conn.RemoteAddr()), "-", target, "ok")
+	return accessLog(s.log, accessSource("tunnel", conn.RemoteAddr()), "-", logTarget, "ok")
 }
 
 func (s *proxyServer) handleTunnelUDP(ctx context.Context, conn net.Conn, reader *bufio.Reader) error {
