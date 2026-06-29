@@ -18,6 +18,11 @@ type ipv4Network struct {
 	network *net.IPNet
 }
 
+type localInterface struct {
+	flags net.Flags
+	addrs []net.Addr
+}
+
 func canConnect(ctx context.Context, ip net.IP, port int, timeout time.Duration) bool {
 	if ip == nil {
 		return false
@@ -124,13 +129,29 @@ func scanLocalIPv4(ctx context.Context, port int, timeout time.Duration, workers
 	}
 }
 
+func hasLocalInternalIPv4() (bool, error) {
+	interfaces, err := systemLocalInterfaces()
+	if err != nil {
+		return false, err
+	}
+	return hasInternalIPv4FromInterfaces(interfaces), nil
+}
+
 func localIPv4Networks(gatewayHint net.IP) ([]ipv4Network, error) {
+	interfaces, err := systemLocalInterfaces()
+	if err != nil {
+		return nil, err
+	}
+	return localIPv4NetworksFromInterfaces(interfaces, gatewayHint), nil
+}
+
+func systemLocalInterfaces() ([]localInterface, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
 
-	networks := make([]ipv4Network, 0, len(interfaces))
+	out := make([]localInterface, 0, len(interfaces))
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -139,9 +160,23 @@ func localIPv4Networks(gatewayHint net.IP) ([]ipv4Network, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, addr := range addrs {
+		out = append(out, localInterface{
+			flags: iface.Flags,
+			addrs: addrs,
+		})
+	}
+	return out, nil
+}
+
+func localIPv4NetworksFromInterfaces(interfaces []localInterface, gatewayHint net.IP) []ipv4Network {
+	networks := make([]ipv4Network, 0, len(interfaces))
+	for _, iface := range interfaces {
+		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 {
+			continue
+		}
+		for _, addr := range iface.addrs {
 			ip, ipNet, ok := ipv4AddrNetwork(addr)
-			if !ok || !isUsefulIPv4Network(ipNet) {
+			if !ok || !isUsefulIPv4Network(ipNet) || !isInternalDiscoveryIPv4(ip) {
 				continue
 			}
 			networks = append(networks, ipv4Network{local: ip, network: ipNet})
@@ -165,7 +200,30 @@ func localIPv4Networks(gatewayHint net.IP) ([]ipv4Network, error) {
 		return ipv4ToUint32(networks[i].local) < ipv4ToUint32(networks[j].local)
 	})
 
-	return networks, nil
+	return networks
+}
+
+func hasInternalIPv4FromInterfaces(interfaces []localInterface) bool {
+	for _, iface := range interfaces {
+		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 {
+			continue
+		}
+		for _, addr := range iface.addrs {
+			ip, _, ok := ipv4AddrNetwork(addr)
+			if ok && isInternalDiscoveryIPv4(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isInternalDiscoveryIPv4(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return ipIsInternal(v4) && !v4.IsLoopback() && !v4.IsUnspecified()
 }
 
 func localIPv4Signature() (string, error) {

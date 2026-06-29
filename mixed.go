@@ -179,10 +179,11 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 }
 
 func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, reader *bufio.Reader, req *httpProxyRequest) error {
+	logProtocol := httpAccessProtocol(req)
 	host, port, err := requestHostPort(req)
 	if err != nil {
 		if s.cfg.UpstreamProtocol == upstreamProtocolMixed {
-			return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, "http", "unknown")
+			return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, "unknown")
 		}
 		return err
 	}
@@ -209,19 +210,19 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 					}
 				}
 				if err := s.bridge(direct, client, reader); err != nil {
-					if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
 						return errors.Join(err, logErr)
 					}
 					return err
 				}
-				return accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, "ok")
+				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, "ok")
 			}
 			rewritten, err := rewriteHTTPProxyRequest(req)
 			if err != nil {
 				return err
 			}
 			if err := writeAll(direct, rewritten); err != nil {
-				if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
@@ -232,12 +233,12 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 				}
 			}
 			if err := s.bridge(direct, client, reader); err != nil {
-				if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
+				if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
 			}
-			return accessLog(s.log, accessSource("http", client.RemoteAddr()), "-", directTarget, "ok")
+			return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", directTarget, "ok")
 		}
 	} else if s.cfg.Verbose {
 		if err := logf(s.log, "force upstream http %s\n", directTarget); err != nil {
@@ -246,7 +247,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	}
 
 	if s.cfg.UpstreamProtocol == upstreamProtocolMixed {
-		return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, "http", directTarget)
+		return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, directTarget)
 	}
 	return s.handleHTTPUpstreamSocks5(ctx, client, reader, req, targetHost, port, directTarget)
 }
@@ -276,9 +277,10 @@ func directCacheKey(network string, host string, port string) string {
 }
 
 func (s *proxyServer) handleHTTPUpstreamSocks5(ctx context.Context, client net.Conn, reader *bufio.Reader, req *httpProxyRequest, host string, port string, target string) error {
+	logProtocol := httpAccessProtocol(req)
 	socksReq, err := socksRequestFromHostPort(host, port)
 	if err != nil {
-		if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), s.resolver.target(), target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), s.resolver.target(), target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
@@ -286,7 +288,7 @@ func (s *proxyServer) handleHTTPUpstreamSocks5(ctx context.Context, client net.C
 
 	upstream, upstreamTarget, err := s.connectViaUpstreamSocks5(ctx, socksReq)
 	if err != nil {
-		if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		if writeErr := writeHTTPBadGateway(client); writeErr != nil {
@@ -298,40 +300,40 @@ func (s *proxyServer) handleHTTPUpstreamSocks5(ctx context.Context, client net.C
 
 	if strings.EqualFold(req.method, "CONNECT") {
 		if err := writeAll(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
-			if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+			if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 				return errors.Join(err, logErr)
 			}
 			return err
 		}
 		if err := s.bridge(upstream, client, reader); err != nil {
-			if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+			if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 				return errors.Join(err, logErr)
 			}
 			return err
 		}
-		return accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, "ok")
+		return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, "ok")
 	}
 
 	rewritten, err := rewriteHTTPProxyRequest(req)
 	if err != nil {
-		if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
 	}
 	if err := writeAll(upstream, rewritten); err != nil {
-		if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
 	}
 	if err := s.bridge(upstream, client, reader); err != nil {
-		if logErr := accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
 	}
-	return accessLog(s.log, accessSource("http", client.RemoteAddr()), upstreamTarget, target, "ok")
+	return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, "ok")
 }
 
 func (s *proxyServer) proxyViaUpstreamRaw(ctx context.Context, client net.Conn, reader *bufio.Reader, initial []byte, protocol string, target string) error {
@@ -634,6 +636,13 @@ func requestHostPort(req *httpProxyRequest) (string, string, error) {
 		return "", "", err
 	}
 	return host, port, nil
+}
+
+func httpAccessProtocol(req *httpProxyRequest) string {
+	if req != nil && strings.EqualFold(req.method, "CONNECT") {
+		return "httpc"
+	}
+	return "http"
 }
 
 func rewriteHTTPProxyRequest(req *httpProxyRequest) ([]byte, error) {

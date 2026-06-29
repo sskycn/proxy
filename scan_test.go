@@ -68,3 +68,80 @@ func TestIsUsefulIPv4Network(t *testing.T) {
 		t.Fatal("/31 should not be scanned")
 	}
 }
+
+func TestLocalIPv4NetworksFromInterfacesKeepsOnlyInternalIPv4(t *testing.T) {
+	publicAddr := mustIPv4Net(t, "203.0.113.10/24")
+	privateAddr := mustIPv4Net(t, "192.168.31.42/24")
+	linkLocalAddr := mustIPv4Net(t, "169.254.1.20/24")
+	loopbackAddr := mustIPv4Net(t, "127.0.0.1/8")
+
+	networks := localIPv4NetworksFromInterfaces([]localInterface{
+		{flags: net.FlagUp, addrs: []net.Addr{publicAddr}},
+		{flags: net.FlagUp, addrs: []net.Addr{privateAddr}},
+		{flags: net.FlagUp, addrs: []net.Addr{linkLocalAddr}},
+		{flags: net.FlagUp | net.FlagLoopback, addrs: []net.Addr{loopbackAddr}},
+	}, net.ParseIP("192.168.31.1"))
+
+	if got, want := len(networks), 2; got != want {
+		t.Fatalf("network count = %d, want %d (%v)", got, want, networks)
+	}
+	if got, want := networks[0].local.String(), "192.168.31.42"; got != want {
+		t.Fatalf("first local IP = %s, want %s", got, want)
+	}
+	if got, want := networks[1].local.String(), "169.254.1.20"; got != want {
+		t.Fatalf("second local IP = %s, want %s", got, want)
+	}
+}
+
+func TestLocalIPv4NetworksFromInterfacesRejectsPublicOnly(t *testing.T) {
+	networks := localIPv4NetworksFromInterfaces([]localInterface{
+		{flags: net.FlagUp, addrs: []net.Addr{mustIPv4Net(t, "203.0.113.10/24")}},
+	}, nil)
+
+	if len(networks) != 0 {
+		t.Fatalf("networks = %v, want empty", networks)
+	}
+}
+
+func TestHasInternalIPv4FromInterfacesDoesNotRequireScannableNetwork(t *testing.T) {
+	if hasInternalIPv4FromInterfaces([]localInterface{
+		{flags: net.FlagUp, addrs: []net.Addr{mustIPv4Net(t, "203.0.113.10/24")}},
+	}) {
+		t.Fatal("public-only interfaces should not count as internal")
+	}
+
+	if !hasInternalIPv4FromInterfaces([]localInterface{
+		{flags: net.FlagUp, addrs: []net.Addr{mustIPv4Net(t, "10.0.0.2/32")}},
+	}) {
+		t.Fatal("internal /32 address should count as internal")
+	}
+}
+
+func TestIsInternalDiscoveryIPv4(t *testing.T) {
+	for _, tc := range []struct {
+		ip   string
+		want bool
+	}{
+		{ip: "192.168.1.20", want: true},
+		{ip: "10.0.0.2", want: true},
+		{ip: "172.16.0.2", want: true},
+		{ip: "169.254.1.2", want: true},
+		{ip: "203.0.113.10", want: false},
+		{ip: "127.0.0.1", want: false},
+		{ip: "0.0.0.0", want: false},
+	} {
+		if got := isInternalDiscoveryIPv4(net.ParseIP(tc.ip)); got != tc.want {
+			t.Fatalf("isInternalDiscoveryIPv4(%s) = %v, want %v", tc.ip, got, tc.want)
+		}
+	}
+}
+
+func mustIPv4Net(t *testing.T, cidr string) *net.IPNet {
+	t.Helper()
+	ip, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	network.IP = ip
+	return network
+}

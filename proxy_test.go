@@ -603,17 +603,37 @@ func TestAccessLogIdentifiesRoute(t *testing.T) {
 	if err := accessLog(&buf, accessSource("http", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}), "-", "x.com:443", "ok"); err != nil {
 		t.Fatal(err)
 	}
-	if err := accessLog(&buf, accessSource("socks5", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1235}), "10.0.0.1:1080", "example.com:443", "connect failed"); err != nil {
+	if err := accessLog(&buf, accessSource("httpc", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1235}), "10.0.0.1:1080", "example.com:443", "connect failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := accessLog(&buf, accessSource("socks5", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1236}), "10.0.0.1:1080", "example.com:443", "connect failed"); err != nil {
 		t.Fatal(err)
 	}
 
 	got := buf.String()
 	for _, want := range []string{
 		"http/localhost:1234 -> x.com:443 ok",
-		"socks5/localhost:1235 -> 10.0.0.1:1080 -> example.com:443 connect failed",
+		"httpc/localhost:1235 -> 10.0.0.1:1080 -> example.com:443 connect failed",
+		"socks5/localhost:1236 -> 10.0.0.1:1080 -> example.com:443 connect failed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("access log = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestHTTPAccessProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		req  *httpProxyRequest
+		want string
+	}{
+		{req: &httpProxyRequest{method: "CONNECT"}, want: "httpc"},
+		{req: &httpProxyRequest{method: "connect"}, want: "httpc"},
+		{req: &httpProxyRequest{method: "GET"}, want: "http"},
+		{req: nil, want: "http"},
+	} {
+		if got := httpAccessProtocol(tc.req); got != tc.want {
+			t.Fatalf("httpAccessProtocol(%v) = %q, want %q", tc.req, got, tc.want)
 		}
 	}
 }

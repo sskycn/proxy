@@ -15,8 +15,8 @@ English | [简体中文](README.zh-CN.md)
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
 - Prints compact terminal access logs; direct connections omit the proxy field.
 - Auto-detects the default gateway IP.
-- Checks whether the detected gateway port is reachable.
-- Scans local IPv4 networks when the detected gateway is unreachable.
+- Checks whether the detected gateway port is reachable only when the machine has an internal IPv4 address.
+- Scans internal local IPv4 networks when the detected gateway is unreachable.
 - Periodically refreshes the reachable upstream so new connections follow network changes.
 - Connects directly to private, loopback, link-local, `localhost`, and `.local` targets instead of forwarding them upstream.
 - Tries direct TCP connections first; if a target cannot be reached directly, remembers that target and sends later connections upstream immediately.
@@ -94,10 +94,13 @@ bin/proxy --config ./config.json
 
 When `--gateway-ip` is not set, startup works like this:
 
-1. Detect the system default gateway IP.
-2. Try to connect to `<gateway-ip>:<gateway-port>`.
-3. If that connection fails, scan local IPv4 networks for a host with `<gateway-port>` open.
-4. Use the first reachable host as the upstream proxy.
+1. Check whether the machine has an internal IPv4 address.
+2. If it does, detect the system default gateway IP.
+3. Try to connect to `<gateway-ip>:<gateway-port>`.
+4. If that connection fails, scan internal local IPv4 networks for a host with `<gateway-port>` open.
+5. Use the first reachable host as the upstream proxy.
+
+If the machine has no internal IPv4 address, automatic gateway probing and local IPv4 scanning are skipped. Set `--gateway-ip` explicitly in that case.
 
 Manual `--gateway-ip` disables scanning and uses the provided IP directly.
 
@@ -151,11 +154,11 @@ UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiat
 
 ## Access Logs
 
-The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The source includes the detected proxy protocol and a friendly local address. Proxied traffic includes the upstream proxy address; direct traffic omits that middle field. The final field is `ok` or the failure reason.
+The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The source includes the detected proxy protocol and a friendly local address; HTTP CONNECT is logged as `httpc`, while normal HTTP proxy traffic is logged as `http`. Proxied traffic includes the upstream proxy address; direct traffic omits that middle field. The final field is `ok` or the failure reason.
 
 ```text
-http/localhost:53000 -> 10.207.20.78:1080 -> x.com:443 ok
-socks5/localhost:53001 -> 192.168.1.10:80 ok
+httpc/localhost:53000 -> 10.207.20.78:1080 -> x.com:443 ok
+http/localhost:53001 -> 192.168.1.10:80 ok
 socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 ```
 

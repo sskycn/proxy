@@ -326,6 +326,14 @@ func resolveGatewayIP(ctx context.Context, cfg config, log io.Writer) (net.IP, e
 		return gatewayIP, nil
 	}
 
+	hasInternalIPv4, err := hasLocalInternalIPv4()
+	if err != nil {
+		return nil, err
+	}
+	if !hasInternalIPv4 {
+		return nil, errors.New("local internal IPv4 address not found; automatic gateway proxy discovery disabled")
+	}
+
 	gatewayIP, err := discoverDefaultGateway()
 	if err == nil {
 		if canConnect(ctx, gatewayIP, cfg.GatewayPort, cfg.DialTimeout) {
