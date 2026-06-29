@@ -12,6 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Forwards to the gateway proxy port `1080` by default.
 - Accepts mixed local proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT.
 - Uses SOCKS5 for upstream traffic by default; `mixed` upstream mode is also supported.
+- Supports `proxy`, `proxy client`, and `proxy server` commands with a compact custom tunnel protocol.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
 - Prints compact terminal access logs; direct connections omit the proxy field.
 - Auto-detects the default gateway IP.
@@ -90,6 +91,18 @@ Use a different route config:
 bin/proxy --config ./config.json
 ```
 
+Run as a tunnel server:
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --token change-me
+```
+
+Run as a tunnel client:
+
+```sh
+bin/proxy client --listen 127.0.0.1:1080 --server-addr 203.0.113.10:9443 --token change-me
+```
+
 ## Gateway Discovery
 
 When `--gateway-ip` is not set, startup works like this:
@@ -118,6 +131,16 @@ In `socks5` mode, SOCKS5 and HTTP proxy traffic with a parsed target is converte
 
 In `mixed` mode, HTTP proxy traffic and unknown mixed traffic are forwarded to the gateway unchanged. SOCKS5 TCP and UDP still use SOCKS5 negotiation, so the upstream mixed port must support SOCKS5.
 
+## Client/Server Commands
+
+Running `proxy` without a subcommand keeps the original local behavior: the local mixed proxy forwards through the discovered gateway proxy.
+
+`proxy server` listens for this project's compact custom tunnel protocol and connects to the requested TCP or UDP target from the server side. Use `--listen` to choose the server bind address and `--token` to require a shared token.
+
+`proxy client` keeps the local mixed proxy listener, but upstream TCP and UDP traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
+
+The custom tunnel is intentionally small and currently carries TCP streams and SOCKS5 UDP packets. It is not VLESS-compatible.
+
 ## Route Config
 
 By default the proxy tries to read `config.json` next to the executable. Relative `--config` paths are resolved from the executable directory; absolute paths are used as provided. The included `config.json` sends `x.com`, `twitter.com`, and related subdomains upstream. If that file does not exist, the proxy runs without custom route rules and creates it before exit when new direct failures are learned. Use `--config <path>` to choose another file, or `--config ""` to disable config loading and write-back.
@@ -127,6 +150,8 @@ Example:
 ```json
 {
   "upstream_protocol": "socks5",
+  "server_addr": "",
+  "token": "",
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
     "domain_prefixes": ["api.", "pbs.twimg."],
@@ -178,6 +203,19 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 -v, --verbose               enable debug logs
 ```
 
+`proxy client` adds:
+
+```text
+--server-addr <string>      custom tunnel server address
+--token <string>            shared token for custom tunnel auth
+```
+
+`proxy server` adds:
+
+```text
+--token <string>            shared token for custom tunnel auth
+```
+
 ## Make Targets
 
 ```sh
@@ -196,7 +234,11 @@ make run LISTEN=127.0.0.1:1081 GATEWAY_PORT=7890
 make run GATEWAY_IP=192.168.1.1
 make run CONFIG=/path/to/config.json
 make run UPSTREAM_PROTOCOL=mixed
+make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
+make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 ```
+
+`MODE=server` and `MODE=client` are Makefile shortcuts that run `proxy server` and `proxy client`.
 
 ## Development
 

@@ -12,6 +12,7 @@
 - 默认转发到网关代理端口 `1080`。
 - 本地支持 mixed 代理流量，包括 SOCKS5、HTTP 代理、HTTP CONNECT。
 - 默认使用 SOCKS5 作为上游协议，也支持 `mixed` 上游模式。
+- 支持 `proxy`、`proxy client`、`proxy server` 三种命令形态，并带一个轻量自定义隧道协议。
 - 支持 SOCKS5 UDP ASSOCIATE，可转发 UDP 流量。
 - 在终端输出紧凑访问日志；直连日志会省略代理字段。
 - 自动发现默认网关 IP。
@@ -90,6 +91,18 @@ bin/proxy --upstream-protocol mixed
 bin/proxy --config ./config.json
 ```
 
+以隧道服务端运行：
+
+```sh
+bin/proxy server --listen 0.0.0.0:9443 --token change-me
+```
+
+以隧道客户端运行：
+
+```sh
+bin/proxy client --listen 127.0.0.1:1080 --server-addr 203.0.113.10:9443 --token change-me
+```
+
 ## 网关发现逻辑
 
 未设置 `--gateway-ip` 时，启动流程如下：
@@ -118,6 +131,16 @@ bin/proxy --config ./config.json
 
 在 `mixed` 模式下，HTTP 代理流量和未知 mixed 流量会原样发往网关。SOCKS5 TCP 和 UDP 仍使用 SOCKS5 协商，因此上游 mixed 端口需要支持 SOCKS5。
 
+## Client/Server 子命令
+
+不带子命令运行 `proxy` 时保持原行为：本地 mixed 代理通过发现到的网关代理转发。
+
+`proxy server` 会监听本项目的轻量自定义隧道协议，并在服务端侧连接真实 TCP 或 UDP 目标。使用 `--listen` 指定服务端监听地址，使用 `--token` 要求共享 token 认证。
+
+`proxy client` 保持本地 mixed 代理入口，但会把已解析出目标的 TCP 和 UDP 上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
+
+自定义隧道刻意保持很小，目前承载 TCP 流和 SOCKS5 UDP 数据包，不兼容 VLESS。
+
 ## 路由配置
 
 程序默认读取可执行文件所在目录下的 `config.json`。相对路径形式的 `--config` 会按可执行文件所在目录解析，绝对路径会原样使用。仓库自带的 `config.json` 已经将 `x.com`、`twitter.com` 及相关子域名设置为强制走上游。如果该文件不存在，会先按无自定义规则运行，并在退出前发现新的直连失败目标时自动创建。可以使用 `--config <path>` 指定其他文件，或使用 `--config ""` 禁用配置加载和写回。
@@ -127,6 +150,8 @@ bin/proxy --config ./config.json
 ```json
 {
   "upstream_protocol": "socks5",
+  "server_addr": "",
+  "token": "",
   "force_upstream": {
     "domains": ["x.com", "twitter.com"],
     "domain_prefixes": ["api.", "pbs.twimg."],
@@ -178,6 +203,19 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 -v, --verbose               输出调试日志
 ```
 
+`proxy client` 额外支持：
+
+```text
+--server-addr <string>      自定义隧道服务端地址
+--token <string>            自定义隧道共享 token
+```
+
+`proxy server` 额外支持：
+
+```text
+--token <string>            自定义隧道共享 token
+```
+
 ## Make 命令
 
 ```sh
@@ -196,7 +234,11 @@ make run LISTEN=127.0.0.1:1081 GATEWAY_PORT=7890
 make run GATEWAY_IP=192.168.1.1
 make run CONFIG=/path/to/config.json
 make run UPSTREAM_PROTOCOL=mixed
+make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
+make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 ```
+
+`MODE=server` 和 `MODE=client` 是 Makefile 快捷入口，会分别运行 `proxy server` 和 `proxy client`。
 
 ## 开发
 

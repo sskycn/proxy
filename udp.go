@@ -37,6 +37,7 @@ type udpRelay struct {
 	conn       *net.UDPConn
 	clientAddr *net.UDPAddr
 	upstream   *udpUpstream
+	custom     *customUDPUpstream
 	mu         sync.Mutex
 }
 
@@ -181,9 +182,12 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 		return accessLog(r.server.log, accessSource("socks5-udp", addr), "-", targetText, "ok")
 	}
 	targetText := net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port)))
+	if r.server.cfg.Mode == proxyModeClient {
+		return r.handleClientPacketTunnel(ctx, addr, dgram, targetText)
+	}
 	upstream, err := r.ensureUpstream(ctx)
 	if err != nil {
-		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.resolver.target(), targetText, err.Error()); logErr != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.upstreamTarget(), targetText, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
@@ -241,6 +245,15 @@ func (r *udpRelay) currentUpstream() *udpUpstream {
 func (r *udpRelay) closeUpstream() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.custom != nil {
+		if err := r.custom.tcp.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if logErr := logf(r.server.log, "close tunnel udp upstream %s: %v\n", r.custom.label, err); logErr != nil {
+				r.custom = nil
+				return
+			}
+		}
+		r.custom = nil
+	}
 	if r.upstream == nil {
 		return
 	}
@@ -253,7 +266,76 @@ func (r *udpRelay) closeUpstream() {
 	r.upstream = nil
 }
 
+func (r *udpRelay) handleClientPacketTunnel(ctx context.Context, addr *net.UDPAddr, dgram socksUDPDatagram, targetText string) error {
+	upstream, err := r.ensureTunnelUpstream(ctx)
+	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.upstreamTarget(), targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	upstream.writeMu.Lock()
+	err = writeTunnelUDPFrame(upstream.tcp, tunnelUDPFrame{
+		host:    dgram.host,
+		port:    dgram.port,
+		payload: dgram.payload,
+	})
+	upstream.writeMu.Unlock()
+	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	return accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, "ok")
+}
+
+func (r *udpRelay) ensureTunnelUpstream(ctx context.Context) (*customUDPUpstream, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.custom != nil {
+		return r.custom, nil
+	}
+	upstream, err := r.server.connectViaTunnelUDP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.custom = upstream
+	go r.forwardTunnelUDPResponses(upstream)
+	return upstream, nil
+}
+
+func (r *udpRelay) forwardTunnelUDPResponses(upstream *customUDPUpstream) {
+	for {
+		frame, err := readTunnelUDPFrame(upstream.reader)
+		if err != nil {
+			if !isExpectedNetworkClose(err) {
+				if logErr := logf(r.server.log, "tunnel udp read %s: %v\n", upstream.label, err); logErr != nil {
+					return
+				}
+			}
+			return
+		}
+		client := r.clientAddr
+		if client == nil {
+			continue
+		}
+		wrapped := buildSocksUDPDatagram(frame.host, frame.port, frame.payload)
+		if _, err := r.conn.WriteToUDP(wrapped, client); err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				if logErr := logf(r.server.log, "tunnel udp write client %s: %v\n", client, err); logErr != nil {
+					return
+				}
+			}
+			return
+		}
+	}
+}
+
 func (s *proxyServer) connectViaUpstreamUDP(ctx context.Context) (*udpUpstream, error) {
+	if s.cfg.Mode == proxyModeClient {
+		return nil, errors.New("SOCKS5 UDP upstream is unsupported in client mode")
+	}
 	upstream, target, err := s.connectUpstreamRaw(ctx)
 	if err != nil {
 		return nil, err

@@ -21,6 +21,9 @@ import (
 
 const (
 	version                = "v0.1.0"
+	proxyModeLocal         = "local"
+	proxyModeClient        = "client"
+	proxyModeServer        = "server"
 	upstreamProtocolSOCKS5 = "socks5"
 	upstreamProtocolMixed  = "mixed"
 )
@@ -29,6 +32,9 @@ var errListenerClosedByContext = errors.New("listener closed after context cance
 
 type config struct {
 	ListenAddr       string
+	Mode             string
+	ServerAddr       string
+	Token            string
 	GatewayIP        string
 	GatewayPort      int
 	UpstreamProtocol string
@@ -44,6 +50,7 @@ type config struct {
 func defaultConfig() config {
 	return config{
 		ListenAddr:       "127.0.0.1:1080",
+		Mode:             proxyModeLocal,
 		GatewayPort:      1080,
 		UpstreamProtocol: upstreamProtocolSOCKS5,
 		ConfigPath:       "config.json",
@@ -78,6 +85,8 @@ func buildApp() *cmd.App {
 			"proxy",
 			"proxy --listen 127.0.0.1:1081 --gateway-port 1080",
 			"proxy --gateway-ip 192.168.1.1",
+			"proxy client --server-addr 203.0.113.10:9443",
+			"proxy server --listen 0.0.0.0:9443",
 			"proxy --upstream-protocol mixed",
 		},
 		SetFlags: func(f *cmd.FlagSet) {
@@ -97,6 +106,7 @@ func buildApp() *cmd.App {
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
+			cfg.Mode = proxyModeLocal
 			if strings.TrimSpace(upstreamProtocolFlag) != "" {
 				cfg.UpstreamProtocol = upstreamProtocolFlag
 			} else {
@@ -105,7 +115,7 @@ func buildApp() *cmd.App {
 			return runProxy(ctx, cfg, os.Stderr)
 		},
 	}
-	app.AddCommands(&cmd.Command{
+	app.AddCommands(buildClientCommand(&cfg), buildServerCommand(&cfg), &cmd.Command{
 		Name:      "version",
 		UsageLine: "proxy version",
 		Short:     "print version",
@@ -116,6 +126,71 @@ func buildApp() *cmd.App {
 	})
 
 	return app
+}
+
+func buildClientCommand(cfg *config) *cmd.Command {
+	serverAddrFlag := ""
+	tokenFlag := ""
+	return &cmd.Command{
+		Name:      "client",
+		UsageLine: "proxy client [flags]",
+		Short:     "run local mixed proxy and forward upstream traffic through a tunnel server",
+		Examples: []string{
+			"proxy client --server-addr 203.0.113.10:9443 --token change-me",
+			"proxy client --listen 127.0.0.1:1081 --server-addr 203.0.113.10:9443",
+		},
+		SetFlags: func(f *cmd.FlagSet) {
+			f.StringVar(&serverAddrFlag, "server-addr", serverAddrFlag, "custom tunnel server address", "")
+			f.StringVar(&tokenFlag, "token", tokenFlag, "shared token for custom tunnel auth", "")
+		},
+		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("unexpected args: %v", args)
+			}
+			cfg.Mode = proxyModeClient
+			if strings.TrimSpace(serverAddrFlag) != "" {
+				cfg.ServerAddr = serverAddrFlag
+			} else {
+				cfg.ServerAddr = ""
+			}
+			if strings.TrimSpace(tokenFlag) != "" {
+				cfg.Token = tokenFlag
+			} else {
+				cfg.Token = ""
+			}
+			return runProxy(ctx, *cfg, os.Stderr)
+		},
+	}
+}
+
+func buildServerCommand(cfg *config) *cmd.Command {
+	tokenFlag := ""
+	return &cmd.Command{
+		Name:      "server",
+		UsageLine: "proxy server [flags]",
+		Short:     "run a custom tunnel server",
+		Examples: []string{
+			"proxy server --listen 0.0.0.0:9443 --token change-me",
+		},
+		SetFlags: func(f *cmd.FlagSet) {
+			f.StringVar(&tokenFlag, "token", tokenFlag, "shared token for custom tunnel auth", "")
+		},
+		Run: func(ctx context.Context, c *cmd.Command, args []string) error {
+			if len(args) != 0 {
+				return fmt.Errorf("unexpected args: %v", args)
+			}
+			cfg.Mode = proxyModeServer
+			if cfg.ListenAddr == defaultConfig().ListenAddr {
+				cfg.ListenAddr = "0.0.0.0:9443"
+			}
+			if strings.TrimSpace(tokenFlag) != "" {
+				cfg.Token = tokenFlag
+			} else {
+				cfg.Token = ""
+			}
+			return runProxy(ctx, *cfg, os.Stderr)
+		},
+	}
 }
 
 type proxyServer struct {
@@ -170,7 +245,10 @@ func (c *directCache) upstreamOnlyHosts() []string {
 }
 
 func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
-	if cfg.GatewayPort <= 0 || cfg.GatewayPort > 65535 {
+	if cfg.GatewayPort == 0 {
+		cfg.GatewayPort = defaultConfig().GatewayPort
+	}
+	if cfg.GatewayPort < 0 || cfg.GatewayPort > 65535 {
 		return fmt.Errorf("invalid gateway port: %d", cfg.GatewayPort)
 	}
 	if cfg.DialTimeout <= 0 {
@@ -195,16 +273,22 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 	}
 	cfg.ConfigPath = configPath
 
-	if strings.TrimSpace(cfg.UpstreamProtocol) == "" {
-		protocol, err := loadConfiguredUpstreamProtocol(cfg.ConfigPath)
-		if err != nil {
-			return err
-		}
-		cfg.UpstreamProtocol = protocol
+	if err := applyRuntimeConfigDefaults(&cfg); err != nil {
+		return err
+	}
+	cfg.Mode, err = normalizeProxyMode(cfg.Mode)
+	if err != nil {
+		return err
 	}
 	cfg.UpstreamProtocol, err = normalizeUpstreamProtocol(cfg.UpstreamProtocol)
 	if err != nil {
 		return err
+	}
+	if cfg.Mode == proxyModeClient && strings.TrimSpace(cfg.ServerAddr) == "" {
+		return errors.New("server address is required in client mode")
+	}
+	if cfg.Mode == proxyModeServer {
+		return runTunnelServer(ctx, cfg, log)
 	}
 
 	routes, err := loadRouteRules(cfg.ConfigPath)
@@ -212,9 +296,12 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 		return err
 	}
 
-	resolver, err := newUpstreamResolver(ctx, cfg, log)
-	if err != nil {
-		return err
+	var resolver *upstreamResolver
+	if cfg.Mode == proxyModeLocal {
+		resolver, err = newUpstreamResolver(ctx, cfg, log)
+		if err != nil {
+			return err
+		}
 	}
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
@@ -245,13 +332,21 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 		return &buf
 	}
 	defer func() {
-		if err := persistDirectFailures(cfg.ConfigPath, server.direct.upstreamOnlyHosts()); err != nil {
-			retErr = errors.Join(retErr, err)
+		if cfg.Mode != proxyModeServer {
+			if err := persistDirectFailures(cfg.ConfigPath, server.direct.upstreamOnlyHosts()); err != nil {
+				retErr = errors.Join(retErr, err)
+			}
 		}
 	}()
 
-	if err := logf(log, "listening on %s, forwarding mixed traffic to %s via %s\n", listener.Addr(), resolver.target(), cfg.UpstreamProtocol); err != nil {
-		return err
+	if cfg.Mode == proxyModeClient {
+		if err := logf(log, "listening on %s, forwarding mixed traffic to tunnel server %s\n", listener.Addr(), cfg.ServerAddr); err != nil {
+			return err
+		}
+	} else {
+		if err := logf(log, "listening on %s, forwarding mixed traffic to %s via %s\n", listener.Addr(), server.upstreamTarget(), cfg.UpstreamProtocol); err != nil {
+			return err
+		}
 	}
 
 	closeErr := make(chan error, 1)
@@ -264,7 +359,10 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 		closeErr <- errListenerClosedByContext
 	}()
 
-	refreshErr := resolver.start(ctx)
+	var refreshErr <-chan error
+	if resolver != nil {
+		refreshErr = resolver.start(ctx)
+	}
 
 	var tempDelay time.Duration
 	for {
@@ -315,6 +413,29 @@ func normalizeUpstreamProtocol(value string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid upstream protocol %q; supported values: %s, %s", value, upstreamProtocolSOCKS5, upstreamProtocolMixed)
 	}
+}
+
+func normalizeProxyMode(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", proxyModeLocal:
+		return proxyModeLocal, nil
+	case proxyModeClient:
+		return proxyModeClient, nil
+	case proxyModeServer:
+		return proxyModeServer, nil
+	default:
+		return "", fmt.Errorf("invalid mode %q; supported values: %s, %s, %s", value, proxyModeLocal, proxyModeClient, proxyModeServer)
+	}
+}
+
+func (s *proxyServer) upstreamTarget() string {
+	if s.cfg.Mode == proxyModeClient {
+		return s.cfg.ServerAddr
+	}
+	if s.resolver == nil {
+		return ""
+	}
+	return s.resolver.target()
 }
 
 func resolveGatewayIP(ctx context.Context, cfg config, log io.Writer) (net.IP, error) {
@@ -502,6 +623,9 @@ func (s *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 }
 
 func (s *proxyServer) connectUpstreamRaw(ctx context.Context) (net.Conn, string, error) {
+	if s.cfg.Mode == proxyModeClient {
+		return nil, s.cfg.ServerAddr, errors.New("raw upstream is unsupported in client mode")
+	}
 	target := s.resolver.target()
 	upstream, err := s.dialer.DialContext(ctx, "tcp", target)
 	if err != nil {

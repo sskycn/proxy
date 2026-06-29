@@ -12,6 +12,9 @@ import (
 )
 
 type routeConfigFile struct {
+	Mode             string              `json:"mode,omitempty"`
+	ServerAddr       string              `json:"server_addr,omitempty"`
+	Token            string              `json:"token,omitempty"`
 	UpstreamProtocol string              `json:"upstream_protocol,omitempty"`
 	ForceUpstream    forceUpstreamConfig `json:"force_upstream"`
 }
@@ -69,6 +72,32 @@ func loadConfiguredUpstreamProtocol(path string) (string, error) {
 		return "", err
 	}
 	return cfg.UpstreamProtocol, nil
+}
+
+func applyRuntimeConfigDefaults(cfg *config) error {
+	if cfg == nil || strings.TrimSpace(cfg.ConfigPath) == "" {
+		return nil
+	}
+	fileCfg, err := readRouteConfig(cfg.ConfigPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(cfg.Mode) == "" {
+		cfg.Mode = fileCfg.Mode
+	}
+	if strings.TrimSpace(cfg.ServerAddr) == "" {
+		cfg.ServerAddr = fileCfg.ServerAddr
+	}
+	if strings.TrimSpace(cfg.Token) == "" {
+		cfg.Token = fileCfg.Token
+	}
+	if strings.TrimSpace(cfg.UpstreamProtocol) == "" {
+		cfg.UpstreamProtocol = fileCfg.UpstreamProtocol
+	}
+	return nil
 }
 
 func resolveConfigPath(path string) (string, error) {

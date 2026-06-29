@@ -68,7 +68,7 @@ func (s *proxyServer) routeMixed(ctx context.Context, client net.Conn, reader *b
 		if err == nil {
 			return s.handleHTTPProxy(ctx, client, reader, req)
 		}
-		if errors.Is(err, errHTTPMalformedRequest) && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
+		if errors.Is(err, errHTTPMalformedRequest) && s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
 			var initial []byte
 			if req != nil {
 				initial = req.raw
@@ -80,7 +80,7 @@ func (s *proxyServer) routeMixed(ctx context.Context, client net.Conn, reader *b
 		}
 	}
 
-	if s.cfg.UpstreamProtocol == upstreamProtocolMixed {
+	if s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
 		return s.proxyViaUpstreamRaw(ctx, client, reader, nil, "mixed", "unknown")
 	}
 	return accessLog(s.log, accessSource("mixed", client.RemoteAddr()), "", "unknown", "unsupported mixed traffic")
@@ -150,7 +150,7 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 	}
 
 	requestedTarget := target
-	upstream, target, err := s.connectViaUpstreamSocks5(ctx, req)
+	upstream, target, err := s.connectViaUpstreamTCP(ctx, req)
 	if err != nil {
 		if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), target, requestedTarget, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
@@ -182,7 +182,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	logProtocol := httpAccessProtocol(req)
 	host, port, err := requestHostPort(req)
 	if err != nil {
-		if s.cfg.UpstreamProtocol == upstreamProtocolMixed {
+		if s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
 			return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, "unknown")
 		}
 		return err
@@ -246,7 +246,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 		}
 	}
 
-	if s.cfg.UpstreamProtocol == upstreamProtocolMixed {
+	if s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
 		return s.proxyViaUpstreamRaw(ctx, client, reader, req.raw, logProtocol, directTarget)
 	}
 	return s.handleHTTPUpstreamSocks5(ctx, client, reader, req, targetHost, port, directTarget)
@@ -280,13 +280,13 @@ func (s *proxyServer) handleHTTPUpstreamSocks5(ctx context.Context, client net.C
 	logProtocol := httpAccessProtocol(req)
 	socksReq, err := socksRequestFromHostPort(host, port)
 	if err != nil {
-		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), s.resolver.target(), target, err.Error()); logErr != nil {
+		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), s.upstreamTarget(), target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
 		}
 		return err
 	}
 
-	upstream, upstreamTarget, err := s.connectViaUpstreamSocks5(ctx, socksReq)
+	upstream, upstreamTarget, err := s.connectViaUpstreamTCP(ctx, socksReq)
 	if err != nil {
 		if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, target, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
@@ -396,6 +396,10 @@ func (s *proxyServer) connectViaUpstreamSocks5(ctx context.Context, req socksReq
 		return nil, target, closeAfterError(upstream, err)
 	}
 	return upstream, target, nil
+}
+
+func (s *proxyServer) connectViaUpstreamTCP(ctx context.Context, req socksRequest) (net.Conn, string, error) {
+	return s.upstreamDialer().dialTCP(ctx, req)
 }
 
 func readSocks5Greeting(reader *bufio.Reader) error {

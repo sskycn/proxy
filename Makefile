@@ -2,6 +2,9 @@ GO ?= go
 BINARY ?= bin/proxy
 DIST_DIR ?= dist
 LISTEN ?= 127.0.0.1:1080
+MODE ?=
+SERVER_ADDR ?=
+TOKEN ?=
 GATEWAY_IP ?=
 GATEWAY_PORT ?= 1080
 UPSTREAM_PROTOCOL ?=
@@ -13,6 +16,17 @@ BUILD_FLAGS ?= -trimpath
 LD_FLAGS ?= -s -w
 GO_ENV := GOCACHE=$(GOCACHE)
 RELEASE_TARGETS ?= linux/amd64 linux/arm64 linux/arm/7 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+
+ifeq ($(MODE),server)
+RUN_COMMAND := server
+RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(TOKEN),--token $(TOKEN),)
+else ifeq ($(MODE),client)
+RUN_COMMAND := client
+RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(SERVER_ADDR),--server-addr $(SERVER_ADDR),) $(if $(TOKEN),--token $(TOKEN),)
+else
+RUN_COMMAND :=
+RUN_FLAGS := --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(UPSTREAM_PROTOCOL),--upstream-protocol $(UPSTREAM_PROTOCOL),) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
+endif
 
 .PHONY: all build release test fmt tidy run clean help
 
@@ -54,7 +68,7 @@ tidy:
 	$(GO) mod tidy
 
 run:
-	$(GO_ENV) $(GO) run . --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(UPSTREAM_PROTOCOL),--upstream-protocol $(UPSTREAM_PROTOCOL),) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
+	$(GO_ENV) $(GO) run . $(RUN_COMMAND) $(RUN_FLAGS)
 
 clean:
 	rm -rf $(dir $(BINARY))
@@ -68,7 +82,7 @@ help:
 	@echo "  make test     Run tests"
 	@echo "  make fmt      Format Go code"
 	@echo "  make tidy     Tidy Go modules"
-	@echo "  make run      Run proxy with LISTEN/GATEWAY_IP/GATEWAY_PORT/UPSTREAM_PROTOCOL/CONFIG overrides"
+	@echo "  make run      Run proxy with LISTEN/MODE/SERVER_ADDR/TOKEN/GATEWAY_IP/GATEWAY_PORT/UPSTREAM_PROTOCOL/CONFIG overrides"
 	@echo "  make clean    Remove build output, release output, and local Go cache"
 	@echo ""
 	@echo "Release targets: $(RELEASE_TARGETS)"

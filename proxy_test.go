@@ -1325,6 +1325,19 @@ func waitForTCP(t *testing.T, addr string) {
 	t.Fatalf("listener %s did not become ready", addr)
 }
 
+func stopProxy(t *testing.T, cancel context.CancelFunc, errCh <-chan error) {
+	t.Helper()
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not stop")
+	}
+}
+
 func reserveTCPAddr(t *testing.T) string {
 	t.Helper()
 	local, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1336,6 +1349,54 @@ func reserveTCPAddr(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return addr
+}
+
+func dialSocks5UDPAssociate(t *testing.T, proxyAddr string) (net.Conn, *net.UDPAddr) {
+	t.Helper()
+	control, err := net.DialTimeout("tcp", proxyAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := control.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	method := make([]byte, 2)
+	if _, err := io.ReadFull(control, method); err != nil {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	if !bytes.Equal(method, []byte{0x05, 0x00}) {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(closeErr)
+		}
+		t.Fatalf("method = %v", method)
+	}
+	if _, err := control.Write(buildSocks5UDPAssociateRequest("0.0.0.0", 0)); err != nil {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	relayHost, relayPort, err := readSocks5ReplyEndpoint(control)
+	if err != nil {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	relayAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(relayHost, strconv.Itoa(int(relayPort))))
+	if err != nil {
+		if closeErr := control.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Fatal(errors.Join(err, closeErr))
+		}
+		t.Fatal(err)
+	}
+	return control, relayAddr
 }
 
 func echoOnce(listener net.Listener, errCh chan<- error) {
@@ -1561,4 +1622,189 @@ func TestRunProxyConvertsHTTPProxyRequestUpstreamToSocks5(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("proxy did not stop")
 	}
+}
+
+func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
+	direct, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close direct listener: %v", err)
+		}
+	})
+	directErr := make(chan error, 1)
+	go echoOnce(direct, directErr)
+
+	serverAddr := reserveTCPAddr(t)
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- runProxy(serverCtx, config{
+			Mode:        proxyModeServer,
+			ListenAddr:  serverAddr,
+			Token:       "secret",
+			DialTimeout: time.Second,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, serverAddr)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{
+		"mode": "client",
+		"server_addr": "` + serverAddr + `",
+		"token": "secret",
+		"force_upstream": {
+			"ip_cidrs": ["127.0.0.1/32"]
+		}
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	clientAddr := reserveTCPAddr(t)
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	defer clientCancel()
+	clientErr := make(chan error, 1)
+	go func() {
+		clientErr <- runProxy(clientCtx, config{
+			ListenAddr:  clientAddr,
+			ConfigPath:  configPath,
+			DialTimeout: time.Second,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, clientAddr)
+
+	client := dialHTTPConnect(t, clientAddr, direct.Addr().String())
+	if _, err := client.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 2)
+	if _, err := io.ReadFull(client, reply); err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != "OK" {
+		t.Fatalf("reply = %q, want OK", reply)
+	}
+	if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-directErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("direct target did not receive tunneled TCP")
+	}
+
+	stopProxy(t, clientCancel, clientErr)
+	stopProxy(t, serverCancel, serverErr)
+}
+
+func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
+	direct, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close direct udp listener: %v", err)
+		}
+	})
+	directErr := make(chan error, 1)
+	go udpEchoOnce(direct, directErr)
+
+	serverAddr := reserveTCPAddr(t)
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- runProxy(serverCtx, config{
+			Mode:        proxyModeServer,
+			ListenAddr:  serverAddr,
+			Token:       "secret",
+			DialTimeout: time.Second,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, serverAddr)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{
+		"mode": "client",
+		"server_addr": "` + serverAddr + `",
+		"token": "secret",
+		"force_upstream": {
+			"ip_cidrs": ["127.0.0.1/32"]
+		}
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	clientAddr := reserveTCPAddr(t)
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	defer clientCancel()
+	clientErr := make(chan error, 1)
+	go func() {
+		clientErr <- runProxy(clientCtx, config{
+			ListenAddr:  clientAddr,
+			ConfigPath:  configPath,
+			DialTimeout: time.Second,
+			BufferSize:  4096,
+		}, io.Discard)
+	}()
+	waitForTCP(t, clientAddr)
+
+	control, relayAddr := dialSocks5UDPAssociate(t, clientAddr)
+	defer func() {
+		if err := control.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close socks control: %v", err)
+		}
+	}()
+
+	udpClient, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := udpClient.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close udp client: %v", err)
+		}
+	})
+	targetPort := uint16(direct.LocalAddr().(*net.UDPAddr).Port)
+	packet := buildSocksUDPDatagram("127.0.0.1", targetPort, []byte("hi"))
+	if _, err := udpClient.WriteToUDP(packet, relayAddr); err != nil {
+		t.Fatal(err)
+	}
+	if err := udpClient.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, udpBufferSize)
+	n, _, err := udpClient.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dgram, err := parseSocksUDPDatagram(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(dgram.payload) != "OK" {
+		t.Fatalf("udp payload = %q, want OK", dgram.payload)
+	}
+	select {
+	case err := <-directErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+	}
+
+	stopProxy(t, clientCancel, clientErr)
+	stopProxy(t, serverCancel, serverErr)
 }
