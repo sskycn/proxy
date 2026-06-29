@@ -235,9 +235,10 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 默认情况下，`proxy server` 会读取可执行文件旁边的 `server.json`，`proxy client` 会读取可执行文件旁边的 `client.json`。显式传入 `--config <path>` 仍会覆盖这些模式默认值；传入 `--config ""` 可以禁用配置加载和写回。
 
-`proxy config` 用于生成可直接编辑的 JSON 配置文件，不会启动代理。默认同时写出 `server.json` 和 `client.json`，两端共享同一个自动生成的 token，并支持通过 `--protocol custom|vless|vmess|trojan` 指定协议。
+`proxy config` 用于生成可直接编辑的 JSON 配置文件，不会启动代理。不带任何 flag 运行时会进入基于命令运行时的交互向导；直接回车使用默认值，也可以输入要覆盖的字段。传入 flag 时仍保持非交互生成，适合脚本使用。默认同时写出 `server.json` 和 `client.json`，两端共享同一个自动生成的 token，并支持通过 `--protocol custom|vless|vmess|trojan` 指定协议。
 
 ```sh
+bin/proxy config
 bin/proxy config --protocol custom --server-addr proxy.example.com:9443
 bin/proxy config --protocol vmess --server-addr proxy.example.com:9443
 bin/proxy config --protocol trojan --transport raw --tls --tls-cert server.crt --tls-key server.key --tls-server-name proxy.example.com

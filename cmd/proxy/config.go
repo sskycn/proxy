@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	proxypkg "sskycn/proxy"
@@ -156,12 +159,19 @@ func buildConfigCommand() *cmd.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
+			if !hasExplicitConfigGenerateFlags(os.Args[1:]) {
+				return runInteractiveConfig(ctx, opts, os.Stdin, os.Stdout, os.Stderr)
+			}
 			return generateConfigFiles(opts)
 		},
 	}
 }
 
 func generateConfigFiles(opts generateConfigOptions) error {
+	return generateConfigFilesWithOutput(opts, os.Stdout)
+}
+
+func generateConfigFilesWithOutput(opts generateConfigOptions, out io.Writer) error {
 	normalizedTarget, err := normalizeConfigTarget(opts.target)
 	if err != nil {
 		return err
@@ -212,16 +222,431 @@ func generateConfigFiles(opts generateConfigOptions) error {
 		if err := writeGeneratedConfig(write.path, write.cfg, opts.overwrite); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(os.Stdout, "wrote %s\n", write.path); err != nil {
-			return err
+		if out != nil {
+			if _, err := fmt.Fprintf(out, "wrote %s\n", write.path); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
+var configGenerateFlagNames = map[string]struct{}{
+	"target":                   {},
+	"protocol":                 {},
+	"transport":                {},
+	"token":                    {},
+	"out-dir":                  {},
+	"server-output":            {},
+	"client-output":            {},
+	"output":                   {},
+	"o":                        {},
+	"server-listen":            {},
+	"client-listen":            {},
+	"server-addr":              {},
+	"tunnel-path":              {},
+	"tls":                      {},
+	"tls-cert":                 {},
+	"tls-key":                  {},
+	"tls-server-name":          {},
+	"tls-insecure":             {},
+	"tunnel-security":          {},
+	"flow":                     {},
+	"reality-server-name":      {},
+	"reality-server-names":     {},
+	"reality-fingerprint":      {},
+	"reality-public-key":       {},
+	"reality-private-key":      {},
+	"reality-short-id":         {},
+	"reality-short-ids":        {},
+	"reality-dest":             {},
+	"reality-spider-x":         {},
+	"mux":                      {},
+	"client-upstream-protocol": {},
+	"force-ip-cidrs":           {},
+	"overwrite":                {},
+}
+
+func hasExplicitConfigGenerateFlags(args []string) bool {
+	inConfigCommand := false
+	for _, arg := range args {
+		if !inConfigCommand {
+			if isConfigCommandName(arg) {
+				inConfigCommand = true
+			}
+			continue
+		}
+		if arg == "--" {
+			return false
+		}
+		name, ok := configFlagName(arg)
+		if !ok {
+			continue
+		}
+		if _, exists := configGenerateFlagNames[name]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func isConfigCommandName(value string) bool {
+	switch value {
+	case "config", "cfg", "gen":
+		return true
+	default:
+		return false
+	}
+}
+
+func configFlagName(value string) (string, bool) {
+	if strings.HasPrefix(value, "--") {
+		name := strings.TrimPrefix(value, "--")
+		if name == "" {
+			return "", false
+		}
+		if index := strings.IndexByte(name, '='); index >= 0 {
+			name = name[:index]
+		}
+		return name, name != ""
+	}
+	if strings.HasPrefix(value, "-") {
+		name := strings.TrimPrefix(value, "-")
+		if name == "" {
+			return "", false
+		}
+		if index := strings.IndexByte(name, '='); index >= 0 {
+			name = name[:index]
+		}
+		if len(name) > 1 {
+			name = name[:1]
+		}
+		return name, name != ""
+	}
+	return "", false
+}
+
 type configWrite struct {
 	path string
 	cfg  generatedRouteConfig
+}
+
+type configWizardDriver struct {
+	opts generateConfigOptions
+}
+
+func runInteractiveConfig(ctx context.Context, opts generateConfigOptions, in io.Reader, out io.Writer, errOut io.Writer) error {
+	app := cmd.NewApp("proxy config")
+	app.EnableREPL()
+	return app.RunWith(ctx, cmd.REPLRuntime{
+		In:      in,
+		Out:     out,
+		Err:     errOut,
+		Welcome: "Interactive config generator. Press Enter to keep the shown default.",
+		Driver:  configWizardDriver{opts: opts},
+	})
+}
+
+func (d configWizardDriver) Run(ctx context.Context, repl *cmd.REPL) error {
+	if repl == nil {
+		return errors.New("config wizard repl is nil")
+	}
+	wizard := configWizard{
+		reader: bufio.NewReader(repl.In),
+		out:    repl.Out,
+		opts:   d.opts,
+	}
+	opts, err := wizard.collect(ctx)
+	if err != nil {
+		return err
+	}
+	return generateConfigFilesWithOutput(opts, repl.Out)
+}
+
+type configWizard struct {
+	reader *bufio.Reader
+	out    io.Writer
+	opts   generateConfigOptions
+}
+
+func (w *configWizard) collect(ctx context.Context) (generateConfigOptions, error) {
+	if w == nil || w.reader == nil {
+		return generateConfigOptions{}, errors.New("config wizard is not initialized")
+	}
+	if err := ctx.Err(); err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts := w.opts
+	var err error
+	opts.protocol, err = w.readChoice("Protocol", []string{
+		proxypkg.TunnelProtocolCustom,
+		proxypkg.TunnelProtocolVLESS,
+		proxypkg.TunnelProtocolVMess,
+		proxypkg.TunnelProtocolTrojan,
+	}, opts.protocol, normalizeGeneratedProtocol)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.target, err = w.readChoice("Config target", []string{configTargetBoth, configTargetServer, configTargetClient}, opts.target, normalizeConfigTarget)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.transport, err = w.readChoice("Tunnel transport", []string{
+		proxypkg.TunnelTransportRaw,
+		proxypkg.TunnelTransportWS,
+		proxypkg.TunnelTransportH2,
+		proxypkg.TunnelTransportH3,
+	}, opts.transport, normalizeGeneratedTransport)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.serverAddr, err = w.readString("Server address for client config", opts.serverAddr)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.serverListen, err = w.readString("Server listen address", opts.serverListen)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.clientListen, err = w.readString("Client listen address", opts.clientListen)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.tunnelPath, err = w.readString("Tunnel path", opts.tunnelPath)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.token, err = w.readString("Shared token/password/UUID (empty = auto generate)", opts.token)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.tunnelSecurity = "none"
+	if opts.protocol == proxypkg.TunnelProtocolVLESS {
+		opts.tunnelSecurity, err = w.readChoice("Tunnel security", []string{"none", "reality"}, opts.tunnelSecurity, normalizeGeneratedSecurity)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+	}
+	if opts.tunnelSecurity == "reality" {
+		opts.tunnelFlow, err = w.readString("VLESS flow", defaultString(opts.tunnelFlow, "xtls-rprx-vision"))
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityServerName, err = w.readString("REALITY client serverName", opts.realityServerName)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityServerNames, err = w.readString("REALITY serverNames", opts.realityServerNames)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityFingerprint, err = w.readString("REALITY fingerprint", defaultString(opts.realityFingerprint, "chrome"))
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityPublicKey, err = w.readString("REALITY client publicKey", opts.realityPublicKey)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityPrivateKey, err = w.readString("REALITY server privateKey", opts.realityPrivateKey)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityShortID, err = w.readString("REALITY client shortId", opts.realityShortID)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityShortIDs, err = w.readString("REALITY server shortIds", opts.realityShortIDs)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realityDest, err = w.readString("REALITY fallback dest", opts.realityDest)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		opts.realitySpiderX, err = w.readString("REALITY spiderX", defaultString(opts.realitySpiderX, "/"))
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+	} else {
+		opts.tunnelTLS, err = w.readBool("Enable TLS", opts.tunnelTLS)
+		if err != nil {
+			return generateConfigOptions{}, err
+		}
+		if opts.tunnelTLS {
+			opts.tunnelTLSCert, err = w.readString("Server TLS certificate path", opts.tunnelTLSCert)
+			if err != nil {
+				return generateConfigOptions{}, err
+			}
+			opts.tunnelTLSKey, err = w.readString("Server TLS private key path", opts.tunnelTLSKey)
+			if err != nil {
+				return generateConfigOptions{}, err
+			}
+			opts.tunnelTLSServerName, err = w.readString("Client TLS server name", opts.tunnelTLSServerName)
+			if err != nil {
+				return generateConfigOptions{}, err
+			}
+			opts.tunnelTLSInsecure, err = w.readBool("Client skip TLS verification", opts.tunnelTLSInsecure)
+			if err != nil {
+				return generateConfigOptions{}, err
+			}
+		}
+	}
+	opts.tunnelMux, err = w.readString("Tunnel mux true/false", defaultString(opts.tunnelMux, "true"))
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.upstreamProtocol, err = w.readChoice("Client upstream protocol", []string{"socks5", "mixed"}, defaultString(opts.upstreamProtocol, "socks5"), normalizeGeneratedUpstreamProtocol)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.forceCIDRs, err = w.readString("Client force-upstream IP CIDRs", opts.forceCIDRs)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.outDir, err = w.readString("Output directory", opts.outDir)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.serverOutput, err = w.readString("Server config output", opts.serverOutput)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.clientOutput, err = w.readString("Client config output", opts.clientOutput)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	opts.overwrite, err = w.readBool("Overwrite existing files", opts.overwrite)
+	if err != nil {
+		return generateConfigOptions{}, err
+	}
+	return opts, nil
+}
+
+func (w *configWizard) readChoice(label string, choices []string, fallback string, normalize func(string) (string, error)) (string, error) {
+	if len(choices) == 0 {
+		return "", errors.New("choice list is empty")
+	}
+	defaultValue, err := normalize(fallback)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := fmt.Fprintf(w.out, "%s:\n", label); err != nil {
+			return "", err
+		}
+		for i, choice := range choices {
+			if _, err := fmt.Fprintf(w.out, "  %d) %s\n", i+1, choice); err != nil {
+				return "", err
+			}
+		}
+		answer, err := w.readString("Choose", defaultValue)
+		if err != nil {
+			return "", err
+		}
+		if index, ok := parseChoiceIndex(answer, len(choices)); ok {
+			return choices[index], nil
+		}
+		value, err := normalize(answer)
+		if err == nil {
+			return value, nil
+		}
+		if _, writeErr := fmt.Fprintf(w.out, "Invalid value: %v\n", err); writeErr != nil {
+			return "", writeErr
+		}
+	}
+}
+
+func (w *configWizard) readString(label string, fallback string) (string, error) {
+	if _, err := fmt.Fprintf(w.out, "%s [%s]: ", label, fallback); err != nil {
+		return "", err
+	}
+	line, err := w.reader.ReadString('\n')
+	if err != nil {
+		if errors.Is(err, io.EOF) && line != "" {
+			return promptValueOrDefault(line, fallback), nil
+		}
+		return "", err
+	}
+	return promptValueOrDefault(line, fallback), nil
+}
+
+func (w *configWizard) readBool(label string, fallback bool) (bool, error) {
+	for {
+		value, err := w.readString(label, strconvBool(fallback))
+		if err != nil {
+			return false, err
+		}
+		parsed, _, err := parseOptionalBool(value)
+		if err == nil {
+			return parsed, nil
+		}
+		if _, writeErr := fmt.Fprintf(w.out, "Invalid boolean value: %v\n", err); writeErr != nil {
+			return false, writeErr
+		}
+	}
+}
+
+func promptValueOrDefault(value string, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
+}
+
+func parseChoiceIndex(value string, size int) (int, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	index, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, false
+	}
+	index--
+	if index < 0 || index >= size {
+		return 0, false
+	}
+	return index, true
+}
+
+func normalizeGeneratedSecurity(value string) (string, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "", "none":
+		return "none", nil
+	case "reality":
+		return "reality", nil
+	default:
+		return "", fmt.Errorf("invalid tunnel security %q; supported values: none, reality", value)
+	}
+}
+
+func normalizeGeneratedUpstreamProtocol(value string) (string, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "", "socks5":
+		return "socks5", nil
+	case "mixed":
+		return "mixed", nil
+	default:
+		return "", fmt.Errorf("invalid upstream protocol %q; supported values: socks5, mixed", value)
+	}
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func strconvBool(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func buildGeneratedConfigs(protocol string, transport string, token string, opts generateConfigOptions, mux bool, muxSet bool, forceCIDRs []string) (generatedRouteConfig, generatedRouteConfig) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	proxypkg "sskycn/proxy"
@@ -78,6 +79,89 @@ func TestGenerateConfigFilesClientOutputAlias(t *testing.T) {
 		t.Fatal("client.json should not be created when --output alias is used")
 	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestRunInteractiveConfigGeneratesBothConfigs(t *testing.T) {
+	dir := t.TempDir()
+	opts := generateConfigOptions{
+		target:       configTargetBoth,
+		protocol:     proxypkg.TunnelProtocolCustom,
+		transport:    proxypkg.TunnelTransportRaw,
+		outDir:       ".",
+		serverOutput: "server.json",
+		clientOutput: "client.json",
+		serverListen: "0.0.0.0:9443",
+		clientListen: "127.0.0.1:1080",
+		serverAddr:   "127.0.0.1:9443",
+		tunnelPath:   "/proxy",
+	}
+	input := strings.Join([]string{
+		"2",
+		"",
+		"",
+		"proxy.example.com:9443",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		"",
+		dir,
+		"",
+		"",
+		"",
+	}, "\n") + "\n"
+	var output strings.Builder
+	if err := runInteractiveConfig(t.Context(), opts, strings.NewReader(input), &output, &output); err != nil {
+		t.Fatal(err)
+	}
+
+	server := readGeneratedConfigForTest(t, filepath.Join(dir, "server.json"))
+	client := readGeneratedConfigForTest(t, filepath.Join(dir, "client.json"))
+	if server.TunnelProtocol != proxypkg.TunnelProtocolVLESS {
+		t.Fatalf("server protocol = %q", server.TunnelProtocol)
+	}
+	if client.ServerAddr != "proxy.example.com:9443" {
+		t.Fatalf("client server_addr = %q", client.ServerAddr)
+	}
+	if client.UpstreamProtocol != "socks5" {
+		t.Fatalf("client upstream_protocol = %q", client.UpstreamProtocol)
+	}
+	if server.TunnelMux == nil || !*server.TunnelMux {
+		t.Fatalf("server tunnel_mux = %v", server.TunnelMux)
+	}
+	if _, err := parseGeneratedUUID(server.Token); err != nil {
+		t.Fatalf("generated token is not UUID: %v", err)
+	}
+	if !strings.Contains(output.String(), "Interactive config generator") {
+		t.Fatalf("interactive output missing welcome: %q", output.String())
+	}
+}
+
+func TestHasExplicitConfigGenerateFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "no flags", args: []string{"config"}, want: false},
+		{name: "root flag before command", args: []string{"--verbose", "config"}, want: false},
+		{name: "long flag", args: []string{"config", "--protocol", "vless"}, want: true},
+		{name: "long flag with value", args: []string{"cfg", "--protocol=vless"}, want: true},
+		{name: "short output flag", args: []string{"gen", "-o", "client.json"}, want: true},
+		{name: "root flag after command", args: []string{"config", "--verbose"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasExplicitConfigGenerateFlags(tc.args)
+			if got != tc.want {
+				t.Fatalf("hasExplicitConfigGenerateFlags(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
 	}
 }
 

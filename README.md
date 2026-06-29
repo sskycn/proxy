@@ -235,9 +235,10 @@ Running `proxy` without a subcommand defaults to local mode. If `config.json` co
 
 By default, `proxy server` reads `server.json` next to the executable and `proxy client` reads `client.json` next to the executable. Passing `--config <path>` still overrides those mode defaults; passing `--config ""` disables config loading and write-back.
 
-`proxy config` generates ready-to-edit JSON config files without starting the proxy. By default it writes both `server.json` and `client.json`, shares one generated token between them, and accepts `--protocol custom|vless|vmess|trojan`.
+`proxy config` generates ready-to-edit JSON config files without starting the proxy. Running it without flags starts an interactive wizard backed by the command runtime; press Enter to accept defaults, or enter values for the fields you want to customize. Passing flags keeps non-interactive generation for scripts. By default it writes both `server.json` and `client.json`, shares one generated token between them, and accepts `--protocol custom|vless|vmess|trojan`.
 
 ```sh
+bin/proxy config
 bin/proxy config --protocol custom --server-addr proxy.example.com:9443
 bin/proxy config --protocol vmess --server-addr proxy.example.com:9443
 bin/proxy config --protocol trojan --transport raw --tls --tls-cert server.crt --tls-key server.key --tls-server-name proxy.example.com
