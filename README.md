@@ -221,7 +221,7 @@ While running, the proxy checks local IPv4 addresses every `--refresh-interval`.
 
 ## Internal Address Bypass
 
-For SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP CONNECT, and HTTP proxy requests, the proxy inspects the requested target. Force-upstream rules in `route.json` have the highest priority. Otherwise, TCP targets are tried directly first. If direct TCP connection fails, that target is remembered as upstream-only and later connections skip the direct attempt. Plain HTTP requests that normally have no request body also require a first response byte within `direct_probe_timeout`; this prevents targets that accept TCP but never return content from stalling the request. UDP targets keep the conservative rule: internal targets go direct, other targets go upstream.
+For SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP CONNECT, and HTTP proxy requests, the proxy inspects the requested target. Force-upstream rules in `route.json` have the highest priority. Otherwise, TCP targets are tried directly first. If direct TCP connection fails, that target is remembered as upstream-only and later connections skip the direct attempt. Plain HTTP requests that normally have no request body require a first response byte within `direct_probe_timeout`. HTTP CONNECT and SOCKS5 CONNECT also probe after the client sends its first tunnel payload; if the direct target accepts TCP but never returns content, the proxy falls back upstream and replays that first payload. UDP targets keep the conservative rule: internal targets go direct, other targets go upstream.
 
 ## Upstream Protocol
 
@@ -383,7 +383,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 -c, --config <string>       JSON runtime config path; defaults by mode; empty disables runtime config loading [default: "config.json"]
 --route-config <string>     JSON route config path; empty disables route loading and write-back [default: "route.json"]
 --dial-timeout <duration>   upstream dial timeout [default: 5s]
---direct-probe-timeout <duration> timeout waiting for the first byte from a direct HTTP target before falling back upstream [default: 500ms]
+--direct-probe-timeout <duration> timeout waiting for direct target response before falling back upstream [default: 500ms]
 --gateway-ip <string>       gateway IP; empty means auto-detect
 -p, --gateway-port <int>    gateway proxy port [default: 1080]
 -l, --listen <string>       local listen address [default: "127.0.0.1:1080"]

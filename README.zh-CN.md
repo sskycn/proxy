@@ -221,7 +221,7 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 ## 内网地址直连
 
-对于 SOCKS5、SOCKS5 UDP ASSOCIATE、HTTP CONNECT 和 HTTP 代理请求，程序会解析请求目标。`route.json` 中的强制走上游规则优先级最高。否则，TCP 目标会优先直连；如果直连失败，会记住该目标为仅走上游，后续连接跳过直连尝试。普通 HTTP 且通常不带请求体的请求，还要求直连目标在 `direct_probe_timeout` 内返回首字节；这可以避免目标 TCP 能连上但一直不返回内容时卡住请求。UDP 目标保持保守规则：内网目标直连，其他目标走上游。
+对于 SOCKS5、SOCKS5 UDP ASSOCIATE、HTTP CONNECT 和 HTTP 代理请求，程序会解析请求目标。`route.json` 中的强制走上游规则优先级最高。否则，TCP 目标会优先直连；如果直连失败，会记住该目标为仅走上游，后续连接跳过直连尝试。普通 HTTP 且通常不带请求体的请求，要求直连目标在 `direct_probe_timeout` 内返回首字节。HTTP CONNECT 和 SOCKS5 CONNECT 会在客户端发送首个隧道数据包后探测直连响应；如果目标 TCP 能连上但一直不返回内容，程序会切到上游并重放该首包。UDP 目标保持保守规则：内网目标直连，其他目标走上游。
 
 ## 上游协议
 
@@ -383,7 +383,7 @@ socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 -c, --config <string>       JSON 运行配置文件路径；默认按模式选择；为空表示禁用运行配置加载 [默认: "config.json"]
 --route-config <string>     JSON 路由配置文件路径；为空表示禁用路由加载和写回 [默认: "route.json"]
 --dial-timeout <duration>   连接上游超时时间 [默认: 5s]
---direct-probe-timeout <duration> 等待直连 HTTP 目标返回首字节的超时时间，超时后走上游 [默认: 500ms]
+--direct-probe-timeout <duration> 等待直连目标响应的超时时间，超时后走上游 [默认: 500ms]
 --gateway-ip <string>       网关 IP；为空表示自动发现
 -p, --gateway-port <int>    网关代理端口 [默认: 1080]
 -l, --listen <string>       本机监听地址 [默认: "127.0.0.1:1080"]

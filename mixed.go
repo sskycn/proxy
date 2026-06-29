@@ -138,22 +138,46 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 			}
 		}
 		if tried && err == nil {
-			defer closeConnWithLog(direct, s.log, "direct socks target "+target)
 			if err := writeSocks5Reply(client, socksReplySucceeded); err != nil {
+				closeConnWithLog(direct, s.log, "direct socks target "+target)
 				return err
 			}
-			if s.cfg.Verbose {
-				if err := logf(s.log, "direct socks %s -> %s\n", client.RemoteAddr(), target); err != nil {
-					return err
+			outbound, outboundReader, upstreamTarget, directOK, err := s.probeDirectTunnelOrFallback(ctx, client, reader, direct, cacheKey, req.host, func(ctx context.Context) (net.Conn, io.Reader, string, error) {
+				upstream, upstreamTarget, err := s.connectViaUpstreamTCP(ctx, req)
+				if err != nil {
+					return nil, nil, upstreamTarget, err
 				}
-			}
-			if err := s.bridge(direct, client, reader); err != nil {
-				if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
+				return upstream, upstream, upstreamTarget, nil
+			})
+			if err != nil {
+				if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), upstreamTarget, logTarget, err.Error()); logErr != nil {
 					return errors.Join(err, logErr)
 				}
 				return err
 			}
-			return accessLog(s.log, accessSource("socks5", client.RemoteAddr()), "-", logTarget, "ok")
+			closeLabel := "upstream socks " + upstreamTarget
+			proxyField := upstreamTarget
+			if directOK {
+				closeLabel = "direct socks target " + target
+				proxyField = "-"
+			}
+			defer closeConnWithLog(outbound, s.log, closeLabel)
+			if s.cfg.Verbose {
+				kind := "proxy"
+				if directOK {
+					kind = "direct"
+				}
+				if err := logf(s.log, "%s socks %s -> %s\n", kind, client.RemoteAddr(), target); err != nil {
+					return err
+				}
+			}
+			if err := s.bridgeWithReaders(outbound, client, outboundReader, reader); err != nil {
+				if logErr := accessLog(s.log, accessSource("socks5", client.RemoteAddr()), proxyField, logTarget, err.Error()); logErr != nil {
+					return errors.Join(err, logErr)
+				}
+				return err
+			}
+			return accessLog(s.log, accessSource("socks5", client.RemoteAddr()), proxyField, logTarget, "ok")
 		}
 	} else if s.cfg.Verbose {
 		if err := logf(s.log, "force upstream socks %s\n", target); err != nil {
@@ -212,24 +236,50 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 			}
 		}
 		if tried && err == nil {
-			defer closeConnWithLog(direct, s.log, "direct http target "+directTarget)
 			if strings.EqualFold(req.method, "CONNECT") {
 				if err := writeAll(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+					closeConnWithLog(direct, s.log, "direct http target "+directTarget)
 					return err
 				}
-				if s.cfg.Verbose {
-					if err := logf(s.log, "direct connect %s -> %s\n", client.RemoteAddr(), directTarget); err != nil {
-						return err
-					}
+				socksReq, err := socksRequestFromHostPort(targetHost, port)
+				if err != nil {
+					closeConnWithLog(direct, s.log, "direct http target "+directTarget)
+					return err
 				}
-				if err := s.bridge(direct, client, reader); err != nil {
-					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, err.Error()); logErr != nil {
+				outbound, outboundReader, upstreamTarget, directOK, err := s.probeDirectTunnelOrFallback(ctx, client, reader, direct, cacheKey, targetHost, func(ctx context.Context) (net.Conn, io.Reader, string, error) {
+					return s.connectHTTPConnectFallback(ctx, req, socksReq)
+				})
+				if err != nil {
+					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), upstreamTarget, logTarget, err.Error()); logErr != nil {
 						return errors.Join(err, logErr)
 					}
 					return err
 				}
-				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, "ok")
+				closeLabel := "upstream http " + upstreamTarget
+				proxyField := upstreamTarget
+				if directOK {
+					closeLabel = "direct http target " + directTarget
+					proxyField = "-"
+				}
+				defer closeConnWithLog(outbound, s.log, closeLabel)
+				if s.cfg.Verbose {
+					kind := "proxy"
+					if directOK {
+						kind = "direct"
+					}
+					if err := logf(s.log, "%s connect %s -> %s\n", kind, client.RemoteAddr(), directTarget); err != nil {
+						return err
+					}
+				}
+				if err := s.bridgeWithReaders(outbound, client, outboundReader, reader); err != nil {
+					if logErr := accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), proxyField, logTarget, err.Error()); logErr != nil {
+						return errors.Join(err, logErr)
+					}
+					return err
+				}
+				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), proxyField, logTarget, "ok")
 			}
+			defer closeConnWithLog(direct, s.log, "direct http target "+directTarget)
 			rewritten, err := rewriteHTTPProxyRequest(req)
 			if err != nil {
 				return err
@@ -457,6 +507,133 @@ func probeDirectHTTPResponse(conn net.Conn, timeout time.Duration) (*bufio.Reade
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return nil, err
+	}
+	return reader, nil
+}
+
+func (s *proxyServer) probeDirectTunnelOrFallback(ctx context.Context, client net.Conn, clientReader *bufio.Reader, direct net.Conn, cacheKey string, host string, fallback func(context.Context) (net.Conn, io.Reader, string, error)) (net.Conn, io.Reader, string, bool, error) {
+	payload, ok, err := readClientTunnelProbePayload(client, clientReader, s.cfg.DirectProbeTimeout)
+	if err != nil {
+		closeConnWithLog(direct, s.log, "direct probe target")
+		return nil, nil, "", false, err
+	}
+	if !ok {
+		return direct, direct, "-", true, nil
+	}
+
+	probeErr := writeAll(direct, payload)
+	var directReader io.Reader
+	if probeErr == nil {
+		directReader, probeErr = probeDirectHTTPResponse(direct, s.cfg.DirectProbeTimeout)
+	}
+	if probeErr == nil {
+		return direct, directReader, "-", true, nil
+	}
+
+	s.direct.markUpstreamOnly(cacheKey, host)
+	if closeErr := direct.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+		probeErr = errors.Join(probeErr, closeErr)
+	}
+	upstream, upstreamReader, upstreamTarget, fallbackErr := fallback(ctx)
+	if fallbackErr != nil {
+		return nil, nil, upstreamTarget, false, errors.Join(probeErr, fallbackErr)
+	}
+	if err := writeAll(upstream, payload); err != nil {
+		return nil, nil, upstreamTarget, false, closeAfterError(upstream, errors.Join(probeErr, err))
+	}
+	return upstream, upstreamReader, upstreamTarget, false, nil
+}
+
+func readClientTunnelProbePayload(client net.Conn, reader *bufio.Reader, timeout time.Duration) ([]byte, bool, error) {
+	if client == nil {
+		return nil, false, errors.New("client connection is nil")
+	}
+	if reader == nil {
+		return nil, false, errors.New("client reader is nil")
+	}
+	if timeout <= 0 {
+		return nil, false, fmt.Errorf("invalid direct probe timeout: %s", timeout)
+	}
+	if reader.Buffered() == 0 {
+		if err := client.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return nil, false, err
+		}
+	}
+	if _, err := reader.Peek(1); err != nil {
+		clearErr := client.SetReadDeadline(time.Time{})
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			if clearErr != nil {
+				return nil, false, clearErr
+			}
+			return nil, false, nil
+		}
+		if clearErr != nil {
+			return nil, false, errors.Join(err, clearErr)
+		}
+		return nil, false, err
+	}
+	if err := client.SetReadDeadline(time.Time{}); err != nil {
+		return nil, false, err
+	}
+	buffered := reader.Buffered()
+	if buffered <= 0 {
+		return nil, false, errors.New("client probe payload is empty after peek")
+	}
+	peeked, err := reader.Peek(buffered)
+	if err != nil {
+		return nil, false, err
+	}
+	payload := append([]byte(nil), peeked...)
+	if _, err := reader.Discard(buffered); err != nil {
+		return nil, false, err
+	}
+	return payload, true, nil
+}
+
+func (s *proxyServer) connectHTTPConnectFallback(ctx context.Context, req *httpProxyRequest, socksReq socksRequest) (net.Conn, io.Reader, string, error) {
+	if s.cfg.Mode == proxyModeLocal && s.cfg.UpstreamProtocol == upstreamProtocolMixed {
+		upstream, upstreamTarget, err := s.connectUpstreamRaw(ctx)
+		if err != nil {
+			return nil, nil, upstreamTarget, err
+		}
+		if err := writeAll(upstream, req.raw); err != nil {
+			return nil, nil, upstreamTarget, closeAfterError(upstream, err)
+		}
+		reader, err := readHTTPConnectUpstreamResponse(upstream)
+		if err != nil {
+			return nil, nil, upstreamTarget, closeAfterError(upstream, err)
+		}
+		return upstream, reader, upstreamTarget, nil
+	}
+
+	upstream, upstreamTarget, err := s.connectViaUpstreamTCP(ctx, socksReq)
+	if err != nil {
+		return nil, nil, upstreamTarget, err
+	}
+	return upstream, upstream, upstreamTarget, nil
+}
+
+func readHTTPConnectUpstreamResponse(conn net.Conn) (*bufio.Reader, error) {
+	if conn == nil {
+		return nil, errors.New("upstream connection is nil")
+	}
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.SplitN(strings.TrimSpace(line), " ", 3)
+	if len(parts) < 2 || !strings.HasPrefix(parts[1], "2") {
+		return nil, fmt.Errorf("upstream CONNECT response line = %q", line)
+	}
+	for {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		if header == "\r\n" || header == "\n" {
+			break
+		}
 	}
 	return reader, nil
 }

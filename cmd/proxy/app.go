@@ -43,7 +43,7 @@ func buildApp() *cmd.App {
 			f.StringVar(&cfg.ConfigPath, "config", cfg.ConfigPath, "JSON runtime config path; defaults: config.json, client.json, or server.json by mode; empty disables runtime config loading", "c")
 			f.StringVar(&cfg.RouteConfigPath, "route-config", cfg.RouteConfigPath, "JSON route config path; empty disables route loading and write-back", "")
 			f.DurationVar(&cfg.DialTimeout, "dial-timeout", cfg.DialTimeout, "upstream dial timeout", "")
-			f.DurationVar(&cfg.DirectProbeTimeout, "direct-probe-timeout", cfg.DirectProbeTimeout, "timeout waiting for the first byte from a direct HTTP target before falling back upstream", "")
+			f.DurationVar(&cfg.DirectProbeTimeout, "direct-probe-timeout", cfg.DirectProbeTimeout, "timeout waiting for direct target response before falling back upstream", "")
 			f.DurationVar(&cfg.RefreshInterval, "refresh-interval", cfg.RefreshInterval, "interval for checking local IPv4 changes; 0 disables refresh", "")
 			f.DurationVar(&cfg.ScanTimeout, "scan-timeout", cfg.ScanTimeout, "per-IP timeout when scanning local IPv4 networks", "")
 			f.IntVar(&cfg.ScanWorkers, "scan-workers", cfg.ScanWorkers, "parallel workers used for IPv4 network scanning", "")
