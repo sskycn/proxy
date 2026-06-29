@@ -17,6 +17,7 @@ func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
 	pathFlag := ""
 	return &cmd.Command{
 		Name:      "server",
+		Aliases:   []string{"s", "srv"},
 		UsageLine: "proxy server [flags]",
 		Short:     "run a custom tunnel server",
 		Examples: []string{

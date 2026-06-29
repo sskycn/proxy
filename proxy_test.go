@@ -494,6 +494,40 @@ func TestPersistDirectFailuresSkipsCoveredRules(t *testing.T) {
 	}
 }
 
+func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configBody := []byte(`{
+		"mode": "client",
+		"server_addr": "203.0.113.10:9443",
+		"token": "secret"
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config{ConfigPath: configPath}
+	if err := applyRuntimeConfigDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != proxyModeClient {
+		t.Fatalf("mode = %q, want %q", cfg.Mode, proxyModeClient)
+	}
+	if cfg.ServerAddr != "203.0.113.10:9443" {
+		t.Fatalf("server addr = %q", cfg.ServerAddr)
+	}
+	if cfg.Token != "secret" {
+		t.Fatalf("token = %q", cfg.Token)
+	}
+
+	cfg = config{ConfigPath: configPath, Mode: proxyModeServer}
+	if err := applyRuntimeConfigDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != proxyModeServer {
+		t.Fatalf("explicit mode = %q, want %q", cfg.Mode, proxyModeServer)
+	}
+}
+
 func TestResolveConfigPathUsesExecutableDirectory(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

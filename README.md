@@ -12,7 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Forwards to the gateway proxy port `1080` by default.
 - Accepts mixed local proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT.
 - Uses SOCKS5 for upstream traffic by default; `mixed` upstream mode is also supported.
-- Supports `proxy`, `proxy client`, and `proxy server` commands with a compact custom tunnel protocol.
+- Supports `proxy`, `proxy local`, `proxy client`, and `proxy server` commands with a compact custom tunnel protocol.
 - Carries the client/server tunnel over raw TCP, WebSocket, HTTP/2, or HTTP/3 transport.
 - Multiplexes client/server tunnel streams by default, so many TCP connections and UDP relays can share one upstream tunnel transport connection.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
@@ -87,6 +87,12 @@ Use a mixed upstream gateway instead of the default SOCKS5 upstream:
 bin/proxy --upstream-protocol mixed
 ```
 
+Run explicitly in local mode, ignoring any `mode` value from `config.json`:
+
+```sh
+bin/proxy local
+```
+
 Use a different route config:
 
 ```sh
@@ -156,11 +162,20 @@ In `mixed` mode, HTTP proxy traffic and unknown mixed traffic are forwarded to t
 
 ## Client/Server Commands
 
-Running `proxy` without a subcommand keeps the original local behavior: the local mixed proxy forwards through the discovered gateway proxy.
+Running `proxy` without a subcommand defaults to local mode. If `config.json` contains top-level `"mode": "client"`, `"mode": "server"`, or `"mode": "local"`, that mode is used instead. Explicit `proxy local`, `proxy client`, and `proxy server` subcommands always take priority over the config mode.
+
+`proxy local` forces local mode: the local mixed proxy forwards through the discovered gateway proxy, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
 
 `proxy server` listens for this project's compact custom tunnel protocol and connects to the requested TCP or UDP target from the server side. Use `--listen` to choose the server bind address and `--token` to require a shared token.
 
 `proxy client` keeps the local mixed proxy listener, but upstream TCP and UDP traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
+
+Subcommand aliases:
+
+- `proxy local`: `proxy l`, `proxy loc`
+- `proxy client`: `proxy c`, `proxy cli`
+- `proxy server`: `proxy s`, `proxy srv`
+- `proxy version`: `proxy v`, `proxy ver`
 
 The tunnel transport is selected with `--transport` or `tunnel_transport` in `config.json`:
 
@@ -207,6 +222,7 @@ Example:
 
 ```json
 {
+  "mode": "local",
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
@@ -229,6 +245,7 @@ Example:
 
 Rule behavior:
 
+- `mode`: runtime mode used when `proxy` is started without a subcommand. Supported values are `local`, `client`, and `server`.
 - `domains`: exact host match.
 - `domain_prefixes`: host starts with the configured value.
 - `domain_suffixes`: matches the domain itself and its subdomains.
@@ -309,6 +326,7 @@ make run LISTEN=127.0.0.1:1081 GATEWAY_PORT=7890
 make run GATEWAY_IP=192.168.1.1
 make run CONFIG=/path/to/config.json
 make run UPSTREAM_PROTOCOL=mixed
+make run MODE=local
 make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
@@ -316,7 +334,7 @@ make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me
 ```
 
-`MODE=server` and `MODE=client` are Makefile shortcuts that run `proxy server` and `proxy client`.
+`MODE=local`, `MODE=server`, and `MODE=client` are Makefile shortcuts that run `proxy local`, `proxy server`, and `proxy client`.
 
 ## Development
 

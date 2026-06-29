@@ -13,6 +13,7 @@ import (
 func buildVersionCommand() *cmd.Command {
 	return &cmd.Command{
 		Name:      "version",
+		Aliases:   []string{"v", "ver"},
 		UsageLine: "proxy version",
 		Short:     "print version",
 		Run: func(ctx context.Context, c *cmd.Command, args []string) error {

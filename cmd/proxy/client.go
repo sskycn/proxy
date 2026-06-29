@@ -19,6 +19,7 @@ func buildClientCommand(cfg *proxypkg.Config) *cmd.Command {
 	tlsServerNameFlag := ""
 	return &cmd.Command{
 		Name:      "client",
+		Aliases:   []string{"c", "cli"},
 		UsageLine: "proxy client [flags]",
 		Short:     "run local mixed proxy and forward upstream traffic through a tunnel server",
 		Examples: []string{

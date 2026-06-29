@@ -12,7 +12,7 @@
 - 默认转发到网关代理端口 `1080`。
 - 本地支持 mixed 代理流量，包括 SOCKS5、HTTP 代理、HTTP CONNECT。
 - 默认使用 SOCKS5 作为上游协议，也支持 `mixed` 上游模式。
-- 支持 `proxy`、`proxy client`、`proxy server` 三种命令形态，并带一个轻量自定义隧道协议。
+- 支持 `proxy`、`proxy local`、`proxy client`、`proxy server` 四种命令形态，并带一个轻量自定义隧道协议。
 - client/server 隧道可承载在 raw TCP、WebSocket、HTTP/2 或 HTTP/3 transport 上。
 - client/server 隧道默认启用多路复用，多条 TCP 连接和 UDP relay 可以共享同一条上游 tunnel transport 连接。
 - 支持 SOCKS5 UDP ASSOCIATE，可转发 UDP 流量。
@@ -87,6 +87,12 @@ bin/proxy --gateway-port 7890
 bin/proxy --upstream-protocol mixed
 ```
 
+显式以 local 模式运行，并忽略 `config.json` 里的 `mode` 值：
+
+```sh
+bin/proxy local
+```
+
 指定路由配置文件：
 
 ```sh
@@ -156,11 +162,20 @@ bin/proxy client --server-addr proxy.example.com:9443 --transport h3 --tunnel-pa
 
 ## Client/Server 子命令
 
-不带子命令运行 `proxy` 时保持原行为：本地 mixed 代理通过发现到的网关代理转发。
+不带子命令运行 `proxy` 时默认是 local 模式。如果 `config.json` 顶层写了 `"mode": "client"`、`"mode": "server"` 或 `"mode": "local"`，则会按配置里的模式启动。显式执行 `proxy local`、`proxy client` 或 `proxy server` 时，子命令优先于配置文件里的 mode。
+
+`proxy local` 会强制 local 模式：本地 mixed 代理通过发现到的网关代理转发，即使 `config.json` 里写了 `"mode": "client"` 或 `"mode": "server"`。
 
 `proxy server` 会监听本项目的轻量自定义隧道协议，并在服务端侧连接真实 TCP 或 UDP 目标。使用 `--listen` 指定服务端监听地址，使用 `--token` 要求共享 token 认证。
 
 `proxy client` 保持本地 mixed 代理入口，但会把已解析出目标的 TCP 和 UDP 上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
+
+子命令别名：
+
+- `proxy local`：`proxy l`、`proxy loc`
+- `proxy client`：`proxy c`、`proxy cli`
+- `proxy server`：`proxy s`、`proxy srv`
+- `proxy version`：`proxy v`、`proxy ver`
 
 隧道承载层可通过 `--transport` 或 `config.json` 里的 `tunnel_transport` 选择：
 
@@ -207,6 +222,7 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
 
 ```json
 {
+  "mode": "local",
   "upstream_protocol": "socks5",
   "server_addr": "",
   "token": "",
@@ -229,6 +245,7 @@ bin/proxy client --server-addr proxy.example.com:443 --transport ws --tunnel-pat
 
 规则说明：
 
+- `mode`：不带子命令运行 `proxy` 时使用的运行模式。支持 `local`、`client` 和 `server`。
 - `domains`：精确匹配主机名。
 - `domain_prefixes`：匹配以指定值开头的主机名。
 - `domain_suffixes`：匹配该域名本身及其子域名。
@@ -309,6 +326,7 @@ make run LISTEN=127.0.0.1:1081 GATEWAY_PORT=7890
 make run GATEWAY_IP=192.168.1.1
 make run CONFIG=/path/to/config.json
 make run UPSTREAM_PROTOCOL=mixed
+make run MODE=local
 make run MODE=server LISTEN=0.0.0.0:9443 TOKEN=change-me
 make run MODE=client SERVER_ADDR=203.0.113.10:9443 TOKEN=change-me
 make run MODE=server LISTEN=127.0.0.1:9443 TRANSPORT=ws TUNNEL_PATH=/proxy TOKEN=change-me
@@ -316,7 +334,7 @@ make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws TUNNEL_PATH=
 make run MODE=client SERVER_ADDR=proxy.example.com:443 TRANSPORT=ws MUX=false TOKEN=change-me
 ```
 
-`MODE=server` 和 `MODE=client` 是 Makefile 快捷入口，会分别运行 `proxy server` 和 `proxy client`。
+`MODE=local`、`MODE=server` 和 `MODE=client` 是 Makefile 快捷入口，会分别运行 `proxy local`、`proxy server` 和 `proxy client`。
 
 ## 开发
 

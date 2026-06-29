@@ -32,6 +32,9 @@ RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(TOKEN),--token $(TOKEN
 else ifeq ($(MODE),client)
 RUN_COMMAND := client
 RUN_FLAGS := --listen $(LISTEN) --config $(CONFIG) $(if $(SERVER_ADDR),--server-addr $(SERVER_ADDR),) $(if $(TOKEN),--token $(TOKEN),) $(if $(TRANSPORT),--transport $(TRANSPORT),) $(if $(TUNNEL_PATH),--tunnel-path $(TUNNEL_PATH),) $(if $(TLS),--tls,) $(if $(TLS_SERVER_NAME),--tls-server-name $(TLS_SERVER_NAME),) $(if $(TLS_INSECURE),--tls-insecure,) $(if $(MUX),--mux=$(MUX),)
+else ifeq ($(MODE),local)
+RUN_COMMAND := local
+RUN_FLAGS := --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(UPSTREAM_PROTOCOL),--upstream-protocol $(UPSTREAM_PROTOCOL),) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)
 else
 RUN_COMMAND :=
 RUN_FLAGS := --listen $(LISTEN) --gateway-port $(GATEWAY_PORT) --config $(CONFIG) $(if $(UPSTREAM_PROTOCOL),--upstream-protocol $(UPSTREAM_PROTOCOL),) $(if $(GATEWAY_IP),--gateway-ip $(GATEWAY_IP),)

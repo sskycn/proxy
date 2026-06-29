@@ -24,6 +24,7 @@ func buildApp() *cmd.App {
 			"through the default gateway's proxy port. Upstream protocol defaults to SOCKS5.",
 		Examples: []string{
 			"proxy",
+			"proxy local",
 			"proxy --listen 127.0.0.1:1081 --gateway-port 1080",
 			"proxy --gateway-ip 192.168.1.1",
 			"proxy client --server-addr 203.0.113.10:9443",
@@ -47,7 +48,7 @@ func buildApp() *cmd.App {
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
-			cfg.Mode = proxypkg.ProxyModeLocal
+			cfg.Mode = ""
 			if strings.TrimSpace(upstreamProtocolFlag) != "" {
 				cfg.UpstreamProtocol = upstreamProtocolFlag
 			} else {
@@ -56,7 +57,7 @@ func buildApp() *cmd.App {
 			return proxypkg.RunProxy(ctx, cfg, os.Stderr)
 		},
 	}
-	app.AddCommands(buildClientCommand(&cfg), buildServerCommand(&cfg), buildVersionCommand())
+	app.AddCommands(buildLocalCommand(&cfg, &upstreamProtocolFlag), buildClientCommand(&cfg), buildServerCommand(&cfg), buildVersionCommand())
 
 	return app
 }

@@ -1,4 +1,5 @@
 {
+  "mode": "local",
   "upstream_protocol": "socks5",
   "force_upstream": {
     "domains": [
