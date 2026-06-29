@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -471,13 +472,16 @@ func (s *proxyServer) connectUpstreamRaw(ctx context.Context) (net.Conn, string,
 	return upstream, target, nil
 }
 
-func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, clientReader io.Reader, initial []byte, accessTarget string) error {
+func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, clientReader io.Reader, initial []byte, accessSource string, accessTarget string) error {
 	upstream, target, err := s.connectUpstreamRaw(ctx)
 	if err != nil {
 		if s.cfg.Verbose {
 			if logErr := logf(s.log, "dial %s failed for %s: %v\n", target, client.RemoteAddr(), err); logErr != nil {
 				return fmt.Errorf("write dial failure log: %w", logErr)
 			}
+		}
+		if logErr := accessLog(s.log, accessSource, target, accessTarget, err.Error()); logErr != nil {
+			return logErr
 		}
 		return nil
 	}
@@ -493,15 +497,17 @@ func (s *proxyServer) proxyViaUpstream(ctx context.Context, client net.Conn, cli
 			return err
 		}
 	}
-	if err := accessLog(s.log, client.RemoteAddr().String(), accessTarget, "proxy"); err != nil {
-		return err
-	}
-
 	var src io.Reader = clientReader
 	if len(initial) > 0 {
 		src = io.MultiReader(bytes.NewReader(initial), clientReader)
 	}
-	return s.bridge(upstream, client, src)
+	if err := s.bridge(upstream, client, src); err != nil {
+		if logErr := accessLog(s.log, accessSource, target, accessTarget, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	return accessLog(s.log, accessSource, target, accessTarget, "ok")
 }
 
 func (s *proxyServer) bridge(upstream net.Conn, client net.Conn, clientReader io.Reader) error {
@@ -546,9 +552,37 @@ func logf(w io.Writer, format string, args ...any) error {
 	return err
 }
 
-func accessLog(w io.Writer, client string, target string, route string) error {
-	_, err := fmt.Fprintf(w, "%s -> %s %s\n", client, target, route)
+func accessLog(w io.Writer, source string, proxy string, target string, status string) error {
+	status = strings.ReplaceAll(status, "\n", " ")
+	status = strings.ReplaceAll(status, "\r", " ")
+	if proxy == "" {
+		proxy = "-"
+	}
+	if proxy == "-" {
+		_, err := fmt.Fprintf(w, "%s -> %s %s\n", source, target, status)
+		return err
+	}
+	_, err := fmt.Fprintf(w, "%s -> %s -> %s %s\n", source, proxy, target, status)
 	return err
+}
+
+func accessSource(protocol string, addr net.Addr) string {
+	if addr == nil {
+		return protocol + "/unknown"
+	}
+	return protocol + "/" + friendlyAddr(addr.String())
+}
+
+func friendlyAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	host = trimHostBrackets(host)
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		host = "localhost"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func isExpectedNetworkClose(err error) bool {

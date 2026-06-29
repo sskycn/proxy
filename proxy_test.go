@@ -636,17 +636,17 @@ func TestUpstreamRefreshRunsWhenLocalIPChanged(t *testing.T) {
 
 func TestAccessLogIdentifiesRoute(t *testing.T) {
 	var buf bytes.Buffer
-	if err := accessLog(&buf, "127.0.0.1:1234", "x.com:443", "direct"); err != nil {
+	if err := accessLog(&buf, accessSource("http-connect", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}), "-", "x.com:443", "ok"); err != nil {
 		t.Fatal(err)
 	}
-	if err := accessLog(&buf, "127.0.0.1:1235", "example.com:443", "proxy"); err != nil {
+	if err := accessLog(&buf, accessSource("socks5", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1235}), "10.0.0.1:1080", "example.com:443", "connect failed"); err != nil {
 		t.Fatal(err)
 	}
 
 	got := buf.String()
 	for _, want := range []string{
-		"127.0.0.1:1234 -> x.com:443 direct",
-		"127.0.0.1:1235 -> example.com:443 proxy",
+		"http-connect/localhost:1234 -> x.com:443 ok",
+		"socks5/localhost:1235 -> 10.0.0.1:1080 -> example.com:443 connect failed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("access log = %q, missing %q", got, want)

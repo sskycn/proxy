@@ -164,21 +164,35 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 		return err
 	}
 	if !r.server.routes.shouldForceUpstream(dgram.host) && hostIsInternal(ctx, dgram.host) {
-		target, err := net.ResolveUDPAddr("udp", net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port))))
+		targetText := net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port)))
+		target, err := net.ResolveUDPAddr("udp", targetText)
 		if err != nil {
+			if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), "-", targetText, err.Error()); logErr != nil {
+				return errors.Join(err, logErr)
+			}
 			return err
 		}
 		if _, err = r.conn.WriteToUDP(dgram.payload, target); err != nil {
+			if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), "-", targetText, err.Error()); logErr != nil {
+				return errors.Join(err, logErr)
+			}
 			return err
 		}
-		return accessLog(r.server.log, addr.String(), target.String(), "direct")
+		return accessLog(r.server.log, accessSource("socks5-udp", addr), "-", targetText, "ok")
 	}
+	targetText := net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port)))
 	upstream, err := r.ensureUpstream(ctx)
 	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.resolver.target(), targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
 		return err
 	}
 	_, err = r.conn.WriteToUDP(packet, upstream.relayAddr)
 	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
 		return err
 	}
 	if r.server.cfg.Verbose {
@@ -186,7 +200,7 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 			return err
 		}
 	}
-	return accessLog(r.server.log, addr.String(), net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port))), "proxy")
+	return accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, "ok")
 }
 
 func (r *udpRelay) handleRemotePacket(addr *net.UDPAddr, packet []byte) error {

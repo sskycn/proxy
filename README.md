@@ -12,7 +12,7 @@ English | [简体中文](README.zh-CN.md)
 - Forwards to the gateway mixed proxy port `1080` by default.
 - Supports mixed proxy traffic such as SOCKS5, HTTP proxy, and HTTP CONNECT when the upstream gateway port supports them.
 - Supports SOCKS5 UDP ASSOCIATE for UDP relay traffic.
-- Prints compact terminal access logs ending with `direct` or `proxy`.
+- Prints compact terminal access logs; direct connections omit the proxy field.
 - Auto-detects the default gateway IP.
 - Checks whether the detected gateway port is reachable.
 - Scans local IPv4 networks when the detected gateway is unreachable.
@@ -135,11 +135,12 @@ UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiat
 
 ## Access Logs
 
-The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The final field identifies whether traffic was sent directly or through the upstream proxy.
+The proxy prints one access line for each routed TCP connection and SOCKS5 UDP datagram. The source includes the detected proxy protocol and a friendly local address. Proxied traffic includes the upstream proxy address; direct traffic omits that middle field. The final field is `ok` or the failure reason.
 
 ```text
-127.0.0.1:53000 -> x.com:443 proxy
-127.0.0.1:53001 -> 192.168.1.10:80 direct
+http-connect/localhost:53000 -> 10.207.20.78:1080 -> x.com:443 ok
+socks5/localhost:53001 -> 192.168.1.10:80 ok
+socks5-udp/localhost:53002 -> 10.207.20.78:1080 -> 8.8.8.8:53 ok
 ```
 
 ## Options
