@@ -243,7 +243,7 @@ Running `tcptun` without a subcommand defaults to local mode. If `config.json` c
 
 `tcptun local` forces local mode: the local mixed proxy listener forwards through the discovered gateway, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
 
-`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. TCP is supported by every tunnel protocol; SOCKS5 UDP relay is supported by the `native` tunnel protocol.
+`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. Server-side outbound targets must resolve to public IP addresses; private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing. TCP is supported by every tunnel protocol; SOCKS5 UDP relay is supported by the `native` tunnel protocol.
 
 `tcptun client` keeps the local mixed proxy listener, but upstream traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
 
@@ -400,7 +400,7 @@ Before exit, learned direct TCP failures are merged into `route.json` or the con
 
 ## UDP Support
 
-UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway's SOCKS5 UDP support.
+UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway's SOCKS5 UDP support. In client/server mode, the server still enforces public-IP-only outbound access and drops UDP datagrams whose target is internal or otherwise non-public.
 
 ## Access Logs
 

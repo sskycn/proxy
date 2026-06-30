@@ -1812,6 +1812,85 @@ func dialHTTPConnect(t *testing.T, proxyAddr string, targetAddr string) net.Conn
 	return client
 }
 
+func assertHTTPConnectRejected(t *testing.T, proxyAddr string, targetAddr string) {
+	t.Helper()
+	client, err := net.DialTimeout("tcp", proxyAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close rejected connect client: %v", err)
+		}
+	}()
+	request := "CONNECT " + targetAddr + " HTTP/1.1\r\nHost: " + targetAddr + "\r\n\r\n"
+	if _, err := client.Write([]byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(client)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(line, " 200 ") {
+		t.Fatalf("CONNECT response line = %q, want non-200", line)
+	}
+}
+
+func assertHTTPConnectUnusable(t *testing.T, proxyAddr string, targetAddr string) {
+	t.Helper()
+	client, err := net.DialTimeout("tcp", proxyAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close unusable connect client: %v", err)
+		}
+	}()
+	request := "CONNECT " + targetAddr + " HTTP/1.1\r\nHost: " + targetAddr + "\r\n\r\n"
+	if _, err := client.Write([]byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(client)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, " 200 ") {
+		return
+	}
+	for {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header == "\r\n" || header == "\n" {
+			break
+		}
+	}
+	if _, err := client.Write([]byte("hi")); err != nil {
+		return
+	}
+	if err := client.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1)
+	if n, err := client.Read(buf); err == nil {
+		t.Fatalf("CONNECT tunnel read %d byte(s), want rejected or closed tunnel", n)
+	} else if !isTimeoutError(err) && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+		var opErr *net.OpError
+		if !errors.As(err, &opErr) {
+			t.Fatalf("CONNECT tunnel read error = %v, want timeout or close", err)
+		}
+	}
+}
+
+func isTimeoutError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func dialSocks5ConnectTCP(t *testing.T, proxyAddr string, targetAddr string) net.Conn {
 	t.Helper()
 	client, err := net.DialTimeout("tcp", proxyAddr, time.Second)
@@ -3128,21 +3207,9 @@ func TestRunProxyConvertsHTTPProxyRequestUpstreamToSocks5(t *testing.T) {
 	}
 }
 
-func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
+func TestRunProxyClientServerRejectsPrivateHTTPConnectTunnel(t *testing.T) {
 	for _, transport := range []string{tunnelTransportRaw, tunnelTransportWS, tunnelTransportH2} {
 		t.Run(transport, func(t *testing.T) {
-			direct, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-					t.Errorf("close direct listener: %v", err)
-				}
-			})
-			directErr := make(chan error, 1)
-			go echoOnce(direct, directErr)
-
 			serverAddr := reserveTCPAddr(t)
 			serverCtx, serverCancel := context.WithCancel(context.Background())
 			defer serverCancel()
@@ -3191,28 +3258,7 @@ func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
 			}()
 			waitForTCP(t, clientAddr)
 
-			client := dialHTTPConnect(t, clientAddr, direct.Addr().String())
-			if _, err := client.Write([]byte("hi")); err != nil {
-				t.Fatal(err)
-			}
-			reply := make([]byte, 2)
-			if _, err := io.ReadFull(client, reply); err != nil {
-				t.Fatal(err)
-			}
-			if string(reply) != "OK" {
-				t.Fatalf("reply = %q, want OK", reply)
-			}
-			if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-				t.Fatal(err)
-			}
-			select {
-			case err := <-directErr:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("direct target did not receive tunneled TCP")
-			}
+			assertHTTPConnectRejected(t, clientAddr, "127.0.0.1:80")
 
 			stopProxy(t, clientCancel, clientErr)
 			stopProxy(t, serverCancel, serverErr)
@@ -3220,7 +3266,7 @@ func TestRunProxyClientServerHTTPConnectTunnel(t *testing.T) {
 	}
 }
 
-func TestRunProxyClientServerProtocolTunnel(t *testing.T) {
+func TestRunProxyClientServerRejectsPrivateProtocolTunnel(t *testing.T) {
 	tests := []struct {
 		name     string
 		protocol string
@@ -3245,18 +3291,6 @@ func TestRunProxyClientServerProtocolTunnel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			direct, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-					t.Errorf("close direct listener: %v", err)
-				}
-			})
-			directErr := make(chan error, 1)
-			go echoOnce(direct, directErr)
-
 			serverAddr := reserveTCPAddr(t)
 			serverCtx, serverCancel := context.WithCancel(context.Background())
 			defer serverCancel()
@@ -3303,28 +3337,7 @@ func TestRunProxyClientServerProtocolTunnel(t *testing.T) {
 			}()
 			waitForTCP(t, clientAddr)
 
-			client := dialHTTPConnect(t, clientAddr, direct.Addr().String())
-			if _, err := client.Write([]byte("hi")); err != nil {
-				t.Fatal(err)
-			}
-			reply := make([]byte, 2)
-			if _, err := io.ReadFull(client, reply); err != nil {
-				t.Fatal(err)
-			}
-			if string(reply) != "OK" {
-				t.Fatalf("reply = %q, want OK", reply)
-			}
-			if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-				t.Fatal(err)
-			}
-			select {
-			case err := <-directErr:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("direct target did not receive tunneled TCP")
-			}
+			assertHTTPConnectUnusable(t, clientAddr, "127.0.0.1:80")
 
 			stopProxy(t, clientCancel, clientErr)
 			stopProxy(t, serverCancel, serverErr)
@@ -3332,19 +3345,7 @@ func TestRunProxyClientServerProtocolTunnel(t *testing.T) {
 	}
 }
 
-func TestRunProxyClientServerTrojanRawTLS(t *testing.T) {
-	direct, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			t.Errorf("close direct listener: %v", err)
-		}
-	})
-	directErr := make(chan error, 1)
-	go echoOnce(direct, directErr)
-
+func TestRunProxyClientServerRejectsPrivateTrojanRawTLS(t *testing.T) {
 	certFile, keyFile := writeTestCertificateFiles(t)
 	serverAddr := reserveTCPAddr(t)
 	serverCtx, serverCancel := context.WithCancel(context.Background())
@@ -3397,34 +3398,13 @@ func TestRunProxyClientServerTrojanRawTLS(t *testing.T) {
 	}()
 	waitForTCP(t, clientAddr)
 
-	client := dialHTTPConnect(t, clientAddr, direct.Addr().String())
-	if _, err := client.Write([]byte("hi")); err != nil {
-		t.Fatal(err)
-	}
-	reply := make([]byte, 2)
-	if _, err := io.ReadFull(client, reply); err != nil {
-		t.Fatal(err)
-	}
-	if string(reply) != "OK" {
-		t.Fatalf("reply = %q, want OK", reply)
-	}
-	if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-directErr:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("direct target did not receive tunneled TCP")
-	}
+	assertHTTPConnectUnusable(t, clientAddr, "127.0.0.1:80")
 
 	stopProxy(t, clientCancel, clientErr)
 	stopProxy(t, serverCancel, serverErr)
 }
 
-func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
+func TestRunProxyClientServerDropsPrivateSOCKS5UDPTunnel(t *testing.T) {
 	for _, transport := range []string{tunnelTransportRaw, tunnelTransportWS, tunnelTransportH2} {
 		t.Run(transport, func(t *testing.T) {
 			direct, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
@@ -3436,8 +3416,6 @@ func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
 					t.Errorf("close direct udp listener: %v", err)
 				}
 			})
-			directErr := make(chan error, 1)
-			go udpEchoOnce(direct, directErr)
 
 			serverAddr := reserveTCPAddr(t)
 			serverCtx, serverCancel := context.WithCancel(context.Background())
@@ -3508,27 +3486,18 @@ func TestRunProxyClientServerSOCKS5UDPTunnel(t *testing.T) {
 			if _, err := udpClient.WriteToUDP(packet, relayAddr); err != nil {
 				t.Fatal(err)
 			}
-			if err := udpClient.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			if err := udpClient.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
 			buf := make([]byte, udpBufferSize)
-			n, _, err := udpClient.ReadFromUDP(buf)
-			if err != nil {
+			if _, _, err := udpClient.ReadFromUDP(buf); err == nil || !isTimeoutError(err) {
+				t.Fatalf("udp client read error = %v, want timeout", err)
+			}
+			if err := direct.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
 				t.Fatal(err)
 			}
-			dgram, err := parseSocksUDPDatagram(buf[:n])
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(dgram.payload) != "OK" {
-				t.Fatalf("udp payload = %q, want OK", dgram.payload)
-			}
-			select {
-			case err := <-directErr:
-				if err != nil {
-					t.Fatal(err)
-				}
-			default:
+			if _, _, err := direct.ReadFromUDP(buf); err == nil || !isTimeoutError(err) {
+				t.Fatalf("direct udp read error = %v, want timeout", err)
 			}
 
 			stopProxy(t, clientCancel, clientErr)

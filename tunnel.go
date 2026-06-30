@@ -295,8 +295,14 @@ func (s *proxyServer) handleTunnelTCP(ctx context.Context, conn net.Conn, reader
 		}
 		return nil
 	}
-	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
 	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
+	target, err := s.publicTCPTarget(ctx, req.host, req.port)
+	if err != nil {
+		if writeErr := writeTunnelResponse(conn, tunnelStatusError, err.Error()); writeErr != nil {
+			return errors.Join(err, writeErr)
+		}
+		return nil
+	}
 	outbound, err := s.dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		if writeErr := writeTunnelResponse(conn, tunnelStatusError, err.Error()); writeErr != nil {
@@ -355,8 +361,21 @@ func (s *proxyServer) tunnelUDPClientToRemote(ctx context.Context, reader *bufio
 			return
 		}
 		targetText := net.JoinHostPort(frame.host, strconv.Itoa(int(frame.port)))
-		target, err := net.ResolveUDPAddr("udp", targetText)
+		target, err := s.publicUDPTarget(ctx, frame.host, frame.port)
 		if err != nil {
+			if errors.Is(err, errServerTargetNotPublic) {
+				if s.cfg.Verbose {
+					if logErr := logf(s.log, "drop tunnel udp %s: %v\n", targetText, err); logErr != nil {
+						done <- logErr
+						return
+					}
+				}
+				if ctx.Err() != nil {
+					done <- ctx.Err()
+					return
+				}
+				continue
+			}
 			done <- err
 			return
 		}

@@ -22,6 +22,7 @@ Chinese version: [protocol-native.zh-CN.md](protocol-native.zh-CN.md)
 | TLS | Supported |
 | REALITY/Vision | Not supported |
 | External Xray compatibility | Not applicable |
+| Server outbound targets | Public IPs only |
 
 ## Important Fields
 

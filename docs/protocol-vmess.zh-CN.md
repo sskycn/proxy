@@ -22,6 +22,7 @@ English version: [protocol-vmess.md](protocol-vmess.md)
 | REALITY/Vision | 不支持 |
 | token 格式 | UUID |
 | VMess security | 仅 `none` |
+| 服务端出站目标 | 仅允许公网 IP |
 
 当前兼容目标：
 

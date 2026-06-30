@@ -21,6 +21,7 @@ Chinese version: [protocol-vless.zh-CN.md](protocol-vless.zh-CN.md)
 | TLS | Supported |
 | REALITY/Vision | Supported, raw transport only |
 | token format | UUID |
+| Server outbound targets | Public IPs only |
 
 ## Important Fields
 

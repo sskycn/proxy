@@ -21,6 +21,7 @@ English version: [protocol-trojan.md](protocol-trojan.md)
 | TLS | 强烈建议 |
 | REALITY/Vision | 不支持 |
 | token 格式 | Trojan password |
+| 服务端出站目标 | 仅允许公网 IP |
 
 ## 关键字段含义
 

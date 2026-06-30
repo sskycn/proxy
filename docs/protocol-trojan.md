@@ -21,6 +21,7 @@ Chinese version: [protocol-trojan.zh-CN.md](protocol-trojan.zh-CN.md)
 | TLS | Strongly recommended |
 | REALITY/Vision | Not supported |
 | token format | Trojan password |
+| Server outbound targets | Public IPs only |
 
 ## Important Fields
 

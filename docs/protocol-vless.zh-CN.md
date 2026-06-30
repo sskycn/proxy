@@ -21,6 +21,7 @@ English version: [protocol-vless.md](protocol-vless.md)
 | TLS | 支持 |
 | REALITY/Vision | 支持，仅 raw transport |
 | token 格式 | UUID |
+| 服务端出站目标 | 仅允许公网 IP |
 
 ## 关键字段含义
 

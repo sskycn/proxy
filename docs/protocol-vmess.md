@@ -22,6 +22,7 @@ Chinese version: [protocol-vmess.zh-CN.md](protocol-vmess.zh-CN.md)
 | REALITY/Vision | Not supported |
 | token format | UUID |
 | VMess body security | `none` only |
+| Server outbound targets | Public IPs only |
 
 Supported compatibility target:
 

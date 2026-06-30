@@ -22,6 +22,7 @@ English version: [protocol-native.md](protocol-native.md)
 | TLS | 支持 |
 | REALITY/Vision | 不支持 |
 | 外部 Xray 兼容 | 不适用 |
+| 服务端出站目标 | 仅允许公网 IP |
 
 ## 关键字段含义
 

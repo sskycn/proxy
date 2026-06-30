@@ -98,6 +98,8 @@ These fields are loaded from `config.json`, `server.json`, or `client.json`.
 | `direct_probe_timeout` | client/local | Timeout used by direct-first probing before falling back upstream. Default is `500ms`; JSON accepts Go duration strings such as `"500ms"`. |
 | `scan_retry_interval` | local | Pause before retrying local IPv4 network scanning after no reachable gateway proxy is found. Default is `5s`. |
 
+In server mode, outbound TCP and UDP targets are limited to public IP addresses. Domain targets are resolved on the server, and private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing; native UDP datagrams to non-public targets are dropped.
+
 ## CLI/API Runtime Knobs
 
 These settings are available as command-line flags and Go `Config` fields, but they are not loaded from runtime JSON files.
@@ -137,7 +139,7 @@ For parsed TCP proxy traffic, force-upstream route rules win first. Otherwise tc
 - Plain HTTP requests that normally have no request body must receive a first response byte within `direct_probe_timeout`.
 - HTTP CONNECT and SOCKS5 CONNECT wait for the client's first tunnel payload, send it to the direct target, and require a first response byte within `direct_probe_timeout`.
 - If probing fails, the target is marked upstream-only, the first payload is replayed to the upstream path, and later connections skip the direct attempt.
-- UDP uses a conservative rule: internal UDP targets go direct, other UDP targets go upstream.
+- UDP uses a conservative rule: internal UDP targets go direct, other UDP targets go upstream. In client/server mode, the server still applies the public-IP-only target policy after traffic reaches the tunnel server.
 
 ## Transport Choices
 

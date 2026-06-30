@@ -243,7 +243,7 @@ bin/tcptun client --server-addr proxy.example.com:9443 --transport h3 --tunnel-p
 
 `tcptun local` 会强制 local 模式：本地 mixed 代理通过发现到的网关转发，即使 `config.json` 里写了 `"mode": "client"` 或 `"mode": "server"`。
 
-`tcptun server` 会监听配置的隧道协议，并在服务端侧连接真实目标。所有隧道协议都支持 TCP；SOCKS5 UDP relay 只由 `native` 隧道协议支持。使用 `--listen` 指定服务端监听地址，使用 `--token` 开启认证。
+`tcptun server` 会监听配置的隧道协议，并在服务端侧连接真实目标。服务端出站目标必须解析为公网 IP；私有、回环、链路本地、组播、CGNAT 和保留网段会在拨号前被拒绝。所有隧道协议都支持 TCP；SOCKS5 UDP relay 只由 `native` 隧道协议支持。使用 `--listen` 指定服务端监听地址，使用 `--token` 开启认证。
 
 `tcptun client` 保持本地 mixed 代理入口，但会把已解析出目标的上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
 
@@ -400,7 +400,7 @@ bin/tcptun client --server-addr proxy.example.com:443 --transport ws --tunnel-pa
 
 ## UDP 支持
 
-UDP 通过 SOCKS5 UDP ASSOCIATE 支持。客户端先在 TCP mixed 代理端口完成协商，程序返回一个 UDP relay 地址，随后 UDP 数据包使用标准 SOCKS5 UDP 包头。内网 UDP 目标会从本地 relay 直连，非内网 UDP 目标会通过上游网关的 SOCKS5 UDP 能力转发。
+UDP 通过 SOCKS5 UDP ASSOCIATE 支持。客户端先在 TCP mixed 代理端口完成协商，程序返回一个 UDP relay 地址，随后 UDP 数据包使用标准 SOCKS5 UDP 包头。内网 UDP 目标会从本地 relay 直连，非内网 UDP 目标会通过上游网关的 SOCKS5 UDP 能力转发。在 client/server 模式下，server 仍会强制执行仅公网 IP 出站规则，目标为内网或其他非公网地址的 UDP 数据包会被直接丢弃。
 
 ## 访问日志
 

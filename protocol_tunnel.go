@@ -90,8 +90,11 @@ func (s *proxyServer) handleProtocolTunnelTCP(ctx context.Context, conn net.Conn
 		clientConn = vmessConn
 		clientReader = newVMessRequestReader(reader, *req.vmessSession)
 	}
-	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
 	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
+	target, err := s.publicTCPTarget(ctx, req.host, req.port)
+	if err != nil {
+		return err
+	}
 	outbound, err := s.dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		return err
