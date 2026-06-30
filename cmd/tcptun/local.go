@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 
 	"pkg.gostartkit.com/cmd"
 )
 
-func buildLocalCommand(cfg *proxypkg.Config, upstreamProtocolFlag *string) *cmd.Command {
+func buildLocalCommand(cfg *tcptun.Config, upstreamProtocolFlag *string) *cmd.Command {
 	return &cmd.Command{
 		Name:      "local",
 		Aliases:   []string{"l", "loc"},
@@ -27,13 +27,13 @@ func buildLocalCommand(cfg *proxypkg.Config, upstreamProtocolFlag *string) *cmd.
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
-			cfg.Mode = proxypkg.ProxyModeLocal
+			cfg.Mode = tcptun.ProxyModeLocal
 			if upstreamProtocolFlag != nil && strings.TrimSpace(*upstreamProtocolFlag) != "" {
 				cfg.UpstreamProtocol = *upstreamProtocolFlag
 			} else {
 				cfg.UpstreamProtocol = ""
 			}
-			return proxypkg.RunProxy(ctx, *cfg, os.Stderr)
+			return tcptun.RunProxy(ctx, *cfg, os.Stderr)
 		},
 	}
 }

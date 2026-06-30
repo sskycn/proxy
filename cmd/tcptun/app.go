@@ -6,13 +6,13 @@ import (
 	"os"
 	"strings"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 
 	"pkg.gostartkit.com/cmd"
 )
 
 func buildApp() *cmd.App {
-	cfg := proxypkg.DefaultConfig()
+	cfg := tcptun.DefaultConfig()
 	upstreamProtocolFlag := ""
 
 	app := cmd.NewApp("tcptun")
@@ -64,7 +64,7 @@ func buildApp() *cmd.App {
 			} else {
 				cfg.UpstreamProtocol = ""
 			}
-			return proxypkg.RunProxy(ctx, cfg, os.Stderr)
+			return tcptun.RunProxy(ctx, cfg, os.Stderr)
 		},
 	}
 	app.AddCommands(buildLocalCommand(&cfg, &upstreamProtocolFlag), buildClientCommand(&cfg), buildServerCommand(&cfg), buildConfigCommand(), buildVersionCommand())
@@ -72,14 +72,14 @@ func buildApp() *cmd.App {
 	return app
 }
 
-func applyModeConfigPathDefault(cfg *proxypkg.Config, defaultPath string) {
+func applyModeConfigPathDefault(cfg *tcptun.Config, defaultPath string) {
 	if cfg == nil {
 		return
 	}
 	if hasExplicitConfigPathFlag(os.Args[1:]) {
 		return
 	}
-	if strings.TrimSpace(cfg.ConfigPath) == proxypkg.DefaultConfig().ConfigPath {
+	if strings.TrimSpace(cfg.ConfigPath) == tcptun.DefaultConfig().ConfigPath {
 		cfg.ConfigPath = defaultPath
 	}
 }

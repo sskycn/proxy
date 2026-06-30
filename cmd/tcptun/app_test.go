@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 )
 
 func TestApplyModeConfigPathDefault(t *testing.T) {
@@ -15,20 +15,20 @@ func TestApplyModeConfigPathDefault(t *testing.T) {
 	}()
 
 	os.Args = []string{"tcptun", "client"}
-	cfg := proxypkg.DefaultConfig()
+	cfg := tcptun.DefaultConfig()
 	applyModeConfigPathDefault(&cfg, "client.json")
 	if cfg.ConfigPath != "client.json" {
 		t.Fatalf("config path = %q, want client.json", cfg.ConfigPath)
 	}
 
-	cfg = proxypkg.DefaultConfig()
+	cfg = tcptun.DefaultConfig()
 	cfg.ConfigPath = "/tmp/explicit.json"
 	applyModeConfigPathDefault(&cfg, "server.json")
 	if cfg.ConfigPath != "/tmp/explicit.json" {
 		t.Fatalf("explicit config path = %q", cfg.ConfigPath)
 	}
 
-	cfg = proxypkg.DefaultConfig()
+	cfg = tcptun.DefaultConfig()
 	cfg.ConfigPath = ""
 	applyModeConfigPathDefault(&cfg, "server.json")
 	if cfg.ConfigPath != "" {
@@ -36,7 +36,7 @@ func TestApplyModeConfigPathDefault(t *testing.T) {
 	}
 
 	os.Args = []string{"tcptun", "client", "--config", "config.json"}
-	cfg = proxypkg.DefaultConfig()
+	cfg = tcptun.DefaultConfig()
 	applyModeConfigPathDefault(&cfg, "server.json")
 	if cfg.ConfigPath != "config.json" {
 		t.Fatalf("explicit default config path = %q", cfg.ConfigPath)

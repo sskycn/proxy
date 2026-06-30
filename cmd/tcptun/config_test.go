@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 )
 
 func TestGenerateConfigFilesBoth(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateConfigOptions{
 		target:                 configTargetBoth,
-		protocol:               proxypkg.TunnelProtocolVLESS,
-		transport:              proxypkg.TunnelTransportRaw,
+		protocol:               tcptun.TunnelProtocolVLESS,
+		transport:              tcptun.TunnelTransportRaw,
 		outDir:                 dir,
 		serverOutput:           "server.json",
 		clientOutput:           "client.json",
@@ -37,10 +37,10 @@ func TestGenerateConfigFilesBoth(t *testing.T) {
 	server := readGeneratedConfigForTest(t, filepath.Join(dir, "server.json"))
 	client := readGeneratedConfigForTest(t, filepath.Join(dir, "client.json"))
 	route := readGeneratedRouteConfigForTest(t, filepath.Join(dir, "route.json"))
-	if server.Mode != proxypkg.ProxyModeServer {
+	if server.Mode != tcptun.ProxyModeServer {
 		t.Fatalf("server mode = %q", server.Mode)
 	}
-	if client.Mode != proxypkg.ProxyModeClient {
+	if client.Mode != tcptun.ProxyModeClient {
 		t.Fatalf("client mode = %q", client.Mode)
 	}
 	if server.Token == "" || server.Token != client.Token {
@@ -70,8 +70,8 @@ func TestGenerateConfigFilesClientOutputAlias(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateConfigOptions{
 		target:       configTargetClient,
-		protocol:     proxypkg.TunnelProtocolTrojan,
-		transport:    proxypkg.TunnelTransportRaw,
+		protocol:     tcptun.TunnelProtocolTrojan,
+		transport:    tcptun.TunnelTransportRaw,
 		token:        "secret",
 		outDir:       dir,
 		serverOutput: "single.json",
@@ -83,7 +83,7 @@ func TestGenerateConfigFilesClientOutputAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := readGeneratedConfigForTest(t, filepath.Join(dir, "single.json"))
-	if client.Mode != proxypkg.ProxyModeClient {
+	if client.Mode != tcptun.ProxyModeClient {
 		t.Fatalf("mode = %q", client.Mode)
 	}
 	if client.Token != "secret" {
@@ -100,8 +100,8 @@ func TestGenerateConfigFilesRealityAutoGeneratesKeys(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateConfigOptions{
 		target:             configTargetBoth,
-		protocol:           proxypkg.TunnelProtocolVLESS,
-		transport:          proxypkg.TunnelTransportRaw,
+		protocol:           tcptun.TunnelProtocolVLESS,
+		transport:          tcptun.TunnelTransportRaw,
 		outDir:             dir,
 		serverOutput:       "server.json",
 		clientOutput:       "client.json",
@@ -147,8 +147,8 @@ func TestRunInteractiveConfigGeneratesBothConfigs(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateConfigOptions{
 		target:       configTargetBoth,
-		protocol:     proxypkg.TunnelProtocolNative,
-		transport:    proxypkg.TunnelTransportRaw,
+		protocol:     tcptun.TunnelProtocolNative,
+		transport:    tcptun.TunnelTransportRaw,
 		outDir:       ".",
 		serverOutput: "server.json",
 		clientOutput: "client.json",
@@ -188,7 +188,7 @@ func TestRunInteractiveConfigGeneratesBothConfigs(t *testing.T) {
 
 	server := readGeneratedConfigForTest(t, filepath.Join(dir, "server.json"))
 	client := readGeneratedConfigForTest(t, filepath.Join(dir, "client.json"))
-	if server.TunnelProtocol != proxypkg.TunnelProtocolVLESS {
+	if server.TunnelProtocol != tcptun.TunnelProtocolVLESS {
 		t.Fatalf("server protocol = %q", server.TunnelProtocol)
 	}
 	if client.ServerAddr != "proxy.example.com:9443" {
@@ -215,8 +215,8 @@ func TestRunInteractiveConfigRealityAutoGeneratesKeys(t *testing.T) {
 	dir := t.TempDir()
 	opts := generateConfigOptions{
 		target:       configTargetBoth,
-		protocol:     proxypkg.TunnelProtocolNative,
-		transport:    proxypkg.TunnelTransportRaw,
+		protocol:     tcptun.TunnelProtocolNative,
+		transport:    tcptun.TunnelTransportRaw,
 		outDir:       ".",
 		serverOutput: "server.json",
 		clientOutput: "client.json",

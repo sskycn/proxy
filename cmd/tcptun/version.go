@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 
 	"pkg.gostartkit.com/cmd"
 )
@@ -20,7 +20,7 @@ func buildVersionCommand() *cmd.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
-			_, err := fmt.Fprintln(os.Stdout, proxypkg.Version)
+			_, err := fmt.Fprintln(os.Stdout, tcptun.Version)
 			return err
 		},
 	}

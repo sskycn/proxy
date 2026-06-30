@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 
 	"pkg.gostartkit.com/cmd"
 )
@@ -114,14 +114,14 @@ type generateConfigOptions struct {
 func buildConfigCommand() *cmd.Command {
 	opts := generateConfigOptions{
 		target:       configTargetBoth,
-		protocol:     proxypkg.TunnelProtocolNative,
-		transport:    proxypkg.TunnelTransportRaw,
+		protocol:     tcptun.TunnelProtocolNative,
+		transport:    tcptun.TunnelTransportRaw,
 		outDir:       ".",
 		serverOutput: "server.json",
 		clientOutput: "client.json",
 		routeOutput:  "route.json",
 		serverListen: "0.0.0.0:9443",
-		clientListen: proxypkg.DefaultConfig().ListenAddr,
+		clientListen: tcptun.DefaultConfig().ListenAddr,
 		serverAddr:   "127.0.0.1:9443",
 		tunnelPath:   "/proxy",
 	}
@@ -429,10 +429,10 @@ func (w *configWizard) collect(ctx context.Context) (generateConfigOptions, erro
 	opts := w.opts
 	var err error
 	opts.protocol, err = w.readChoice("Protocol", []string{
-		proxypkg.TunnelProtocolNative,
-		proxypkg.TunnelProtocolVLESS,
-		proxypkg.TunnelProtocolVMess,
-		proxypkg.TunnelProtocolTrojan,
+		tcptun.TunnelProtocolNative,
+		tcptun.TunnelProtocolVLESS,
+		tcptun.TunnelProtocolVMess,
+		tcptun.TunnelProtocolTrojan,
 	}, opts.protocol, normalizeGeneratedProtocol)
 	if err != nil {
 		return generateConfigOptions{}, err
@@ -442,10 +442,10 @@ func (w *configWizard) collect(ctx context.Context) (generateConfigOptions, erro
 		return generateConfigOptions{}, err
 	}
 	opts.transport, err = w.readChoice("Tunnel transport", []string{
-		proxypkg.TunnelTransportRaw,
-		proxypkg.TunnelTransportWS,
-		proxypkg.TunnelTransportH2,
-		proxypkg.TunnelTransportH3,
+		tcptun.TunnelTransportRaw,
+		tcptun.TunnelTransportWS,
+		tcptun.TunnelTransportH2,
+		tcptun.TunnelTransportH3,
 	}, opts.transport, normalizeGeneratedTransport)
 	if err != nil {
 		return generateConfigOptions{}, err
@@ -471,7 +471,7 @@ func (w *configWizard) collect(ctx context.Context) (generateConfigOptions, erro
 		return generateConfigOptions{}, err
 	}
 	opts.tunnelSecurity = "none"
-	if opts.protocol == proxypkg.TunnelProtocolVLESS {
+	if opts.protocol == tcptun.TunnelProtocolVLESS {
 		opts.tunnelSecurity, err = w.readChoice("Tunnel security", []string{"none", "reality"}, opts.tunnelSecurity, normalizeGeneratedSecurity)
 		if err != nil {
 			return generateConfigOptions{}, err
@@ -725,7 +725,7 @@ func strconvBool(value bool) string {
 
 func buildGeneratedConfigs(protocol string, transport string, token string, opts generateConfigOptions, mux bool, muxSet bool) (generatedRouteConfig, generatedRouteConfig) {
 	serverCfg := generatedRouteConfig{
-		Mode:            proxypkg.ProxyModeServer,
+		Mode:            tcptun.ProxyModeServer,
 		ListenAddr:      strings.TrimSpace(opts.serverListen),
 		Token:           token,
 		TunnelProtocol:  protocol,
@@ -733,7 +733,7 @@ func buildGeneratedConfigs(protocol string, transport string, token string, opts
 		TunnelPath:      normalizeGeneratedPath(opts.tunnelPath),
 	}
 	clientCfg := generatedRouteConfig{
-		Mode:                   proxypkg.ProxyModeClient,
+		Mode:                   tcptun.ProxyModeClient,
 		ListenAddr:             strings.TrimSpace(opts.clientListen),
 		ServerAddr:             strings.TrimSpace(opts.serverAddr),
 		Token:                  token,
@@ -897,7 +897,7 @@ func validateGeneratedOptions(target string, protocol string, opts generateConfi
 			return errors.New("--server-addr is required when generating client config")
 		}
 	}
-	if protocol == proxypkg.TunnelProtocolVLESS || protocol == proxypkg.TunnelProtocolVMess {
+	if protocol == tcptun.TunnelProtocolVLESS || protocol == tcptun.TunnelProtocolVMess {
 		if _, err := parseGeneratedUUID(token); err != nil {
 			return fmt.Errorf("--token must be a UUID for %s: %w", protocol, err)
 		}
@@ -907,7 +907,7 @@ func validateGeneratedOptions(target string, protocol string, opts generateConfi
 		return fmt.Errorf("invalid tunnel security %q; supported values: none, reality", security)
 	}
 	if security == "reality" {
-		if protocol != proxypkg.TunnelProtocolVLESS {
+		if protocol != tcptun.TunnelProtocolVLESS {
 			return errors.New("REALITY config generation requires --protocol vless")
 		}
 		if opts.tunnelTLS {
@@ -983,14 +983,14 @@ func normalizeConfigTarget(value string) (string, error) {
 
 func normalizeGeneratedProtocol(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", proxypkg.TunnelProtocolNative:
-		return proxypkg.TunnelProtocolNative, nil
-	case proxypkg.TunnelProtocolVLESS:
-		return proxypkg.TunnelProtocolVLESS, nil
-	case proxypkg.TunnelProtocolVMess:
-		return proxypkg.TunnelProtocolVMess, nil
-	case proxypkg.TunnelProtocolTrojan:
-		return proxypkg.TunnelProtocolTrojan, nil
+	case "", tcptun.TunnelProtocolNative:
+		return tcptun.TunnelProtocolNative, nil
+	case tcptun.TunnelProtocolVLESS:
+		return tcptun.TunnelProtocolVLESS, nil
+	case tcptun.TunnelProtocolVMess:
+		return tcptun.TunnelProtocolVMess, nil
+	case tcptun.TunnelProtocolTrojan:
+		return tcptun.TunnelProtocolTrojan, nil
 	default:
 		return "", fmt.Errorf("invalid protocol %q; supported values: native, vless, vmess, trojan", value)
 	}
@@ -998,14 +998,14 @@ func normalizeGeneratedProtocol(value string) (string, error) {
 
 func normalizeGeneratedTransport(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", proxypkg.TunnelTransportRaw:
-		return proxypkg.TunnelTransportRaw, nil
-	case proxypkg.TunnelTransportWS:
-		return proxypkg.TunnelTransportWS, nil
-	case proxypkg.TunnelTransportH2:
-		return proxypkg.TunnelTransportH2, nil
-	case proxypkg.TunnelTransportH3:
-		return proxypkg.TunnelTransportH3, nil
+	case "", tcptun.TunnelTransportRaw:
+		return tcptun.TunnelTransportRaw, nil
+	case tcptun.TunnelTransportWS:
+		return tcptun.TunnelTransportWS, nil
+	case tcptun.TunnelTransportH2:
+		return tcptun.TunnelTransportH2, nil
+	case tcptun.TunnelTransportH3:
+		return tcptun.TunnelTransportH3, nil
 	default:
 		return "", fmt.Errorf("invalid transport %q; supported values: raw, ws, h2, h3", value)
 	}
@@ -1038,9 +1038,9 @@ func parseOptionalBool(value string) (bool, bool, error) {
 
 func generateTokenForProtocol(protocol string) (string, error) {
 	switch protocol {
-	case proxypkg.TunnelProtocolVLESS, proxypkg.TunnelProtocolVMess:
+	case tcptun.TunnelProtocolVLESS, tcptun.TunnelProtocolVMess:
 		return generateUUIDv4()
-	case proxypkg.TunnelProtocolNative, proxypkg.TunnelProtocolTrojan:
+	case tcptun.TunnelProtocolNative, tcptun.TunnelProtocolTrojan:
 		return generateHexToken(32)
 	default:
 		return "", fmt.Errorf("unsupported protocol %q", protocol)

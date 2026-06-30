@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	proxypkg "sskycn/tcptun"
+	"sskycn/tcptun"
 
 	"pkg.gostartkit.com/cmd"
 )
 
-func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
+func buildServerCommand(cfg *tcptun.Config) *cmd.Command {
 	tokenFlag := ""
 	protocolFlag := ""
 	transportFlag := ""
@@ -47,9 +47,9 @@ func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
 			if len(args) != 0 {
 				return fmt.Errorf("unexpected args: %v", args)
 			}
-			cfg.Mode = proxypkg.ProxyModeServer
+			cfg.Mode = tcptun.ProxyModeServer
 			applyModeConfigPathDefault(cfg, "server.json")
-			if cfg.ListenAddr == proxypkg.DefaultConfig().ListenAddr {
+			if cfg.ListenAddr == tcptun.DefaultConfig().ListenAddr {
 				cfg.ListenAddr = ""
 			}
 			if strings.TrimSpace(tokenFlag) != "" {
@@ -88,7 +88,7 @@ func buildServerCommand(cfg *proxypkg.Config) *cmd.Command {
 			if strings.TrimSpace(shortIDsFlag) != "" {
 				cfg.RealityShortIDs = splitCommaList(shortIDsFlag)
 			}
-			return proxypkg.RunProxy(ctx, *cfg, os.Stderr)
+			return tcptun.RunProxy(ctx, *cfg, os.Stderr)
 		},
 	}
 }
