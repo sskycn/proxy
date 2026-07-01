@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release assets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          target="tcptun-${version}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          package_dir="dist/${target}"
+          mkdir -p "${package_dir}"
+
+          binary="tcptun"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            binary="tcptun.exe"
+          fi
+
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+            go build -trimpath -ldflags "-s -w" -o "${package_dir}/${binary}" ./cmd/tcptun
+
+          cp README.md README.zh-CN.md "${package_dir}/"
+          cp -R docs "${package_dir}/docs"
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd dist && zip -qr "${target}.zip" "${target}")
+          else
+            tar -C dist -czf "dist/${target}.tar.gz" "${target}"
+          fi
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          for archive in *.tar.gz *.zip; do
+            sha256sum "${archive}" > "${archive}.sha256"
+          done
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
