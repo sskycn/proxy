@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>配置生成与配置文件 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun config 手把手教程，解释 server.json、client.json、route.json 和每个生成参数。">
+    <link rel="canonical" href="https://tcptun.com/guide/config.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="tcptun home"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt="" aria-hidden="true"><span>tcptun</span></a>
+      <nav class="nav" aria-label="Primary"><a href="./">教程首页</a><a href="local.html">local</a><a href="client-server.html">client/server</a><a href="protocols.html">协议</a><a href="reference.html">参数参考</a></nav>
+    </header>
+    <main class="doc-main">
+      <section class="doc-hero">
+        <div>
+          <p class="eyebrow">配置生成</p>
+          <h1>用 <code>tcptun config</code> 生成可直接运行的三份配置。</h1>
+          <p class="lede">生成器会根据你选择的协议、transport、安全层和监听地址写出服务端、客户端和路由文件。它也会自动生成 token、UUID 或 REALITY 密钥。</p>
+        </div>
+        <div class="doc-card">
+          <h3>本页会生成</h3>
+          <ul>
+            <li><code>server.json</code>：给远端 <code>tcptun server</code>。</li>
+            <li><code>client.json</code>：给本机 <code>tcptun client</code>。</li>
+            <li><code>route.json</code>：给 client/local 做强制上游路由。</li>
+          </ul>
+        </div>
+      </section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar" aria-label="教程导航">
+          <a href="./">教程首页</a><a class="active" href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a href="reference.html">参数参考</a>
+        </aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>最推荐的生成方式</h2>
+            <p>如果你第一次使用，先用 native + raw 得到一套最小配置。把 <code>proxy.example.com</code> 改成你的域名或服务器 IP。</p>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --server-listen 0.0.0.0:9443 \
+  --client-listen 127.0.0.1:1080 \
+  --overwrite</code></pre>
+            <p>参数解释：</p>
+            <ul>
+              <li><code>--protocol native</code>：使用 tcptun 原生协议，功能最完整，支持 TCP、SOCKS5 UDP relay 和 tunnel mux。</li>
+              <li><code>--transport raw</code>：隧道直接跑在 TCP 上，额外开销最低。</li>
+              <li><code>--server-addr proxy.example.com:9443</code>：写入 <code>client.json</code>，客户端会连接这个地址。</li>
+              <li><code>--server-listen 0.0.0.0:9443</code>：写入 <code>server.json</code>，服务端监听所有 IPv4 地址的 9443 端口。</li>
+              <li><code>--client-listen 127.0.0.1:1080</code>：写入 <code>client.json</code>，本机应用连接这个本地 mixed 代理。</li>
+              <li><code>--overwrite</code>：如果目标文件已经存在，允许覆盖。生产环境覆盖前请备份旧配置。</li>
+            </ul>
+          </section>
+
+          <section class="doc-section">
+            <h2>交互模式</h2>
+            <p>不带任何生成参数时，命令会进入交互向导。每个问题方括号内是默认值，直接回车会使用默认值。</p>
+            <pre><code>tcptun config</code></pre>
+            <p>典型选择流程：</p>
+            <ol>
+              <li><code>Protocol</code> 选 <code>native</code>、<code>vless</code>、<code>vmess</code> 或 <code>trojan</code>。</li>
+              <li><code>Config target</code> 选 <code>both</code> 会同时生成 server、client、route。</li>
+              <li><code>Tunnel transport</code> 选 <code>raw</code>、<code>ws</code>、<code>h2</code> 或 <code>h3</code>。</li>
+              <li><code>Server address for client config</code> 填公网域名或 IP，例如 <code>proxy.example.com:443</code>。</li>
+              <li><code>Shared token/password/UUID</code> 留空时自动生成。VLESS/VMess 会生成 UUID，native/Trojan 会生成随机十六进制 token。</li>
+              <li>如果是 VLESS 并选择 REALITY，按提示填 <code>serverName</code>、<code>dest</code>、<code>shortId</code> 等字段。</li>
+            </ol>
+          </section>
+
+          <section class="doc-section">
+            <h2>生成 target 怎么选</h2>
+            <table class="doc-table">
+              <thead><tr><th>参数</th><th>输出</th><th>什么时候用</th></tr></thead>
+              <tbody>
+                <tr><td><code>--target both</code></td><td><code>server.json</code>、<code>client.json</code>、<code>route.json</code></td><td>默认值。自己同时控制服务端和客户端时使用。</td></tr>
+                <tr><td><code>--target server</code></td><td>只写服务端配置</td><td>只需要部署远端服务端，或客户端配置由别处提供。</td></tr>
+                <tr><td><code>--target client</code></td><td>写客户端配置和路由配置</td><td>连接已有服务端，例如已有 Xray VLESS REALITY 参数。</td></tr>
+              </tbody>
+            </table>
+            <pre><code>tcptun config \
+  --target client \
+  --output client.json \
+  --route-output route.json \
+  --protocol vless \
+  --server-addr proxy.example.com:443 \
+  --token 00000000-0000-4000-8000-000000000000</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>输出路径和覆盖规则</h2>
+            <p>默认输出到当前目录。你可以用 <code>--out-dir</code> 指定目录，也可以单独设置每个文件名。</p>
+            <pre><code>tcptun config \
+  --out-dir ./deploy \
+  --server-output server.json \
+  --client-output laptop-client.json \
+  --route-output laptop-route.json \
+  --server-addr proxy.example.com:9443</code></pre>
+            <p>如果文件已存在且没有 <code>--overwrite</code>，命令会报错并停止。这是为了避免误覆盖密钥、token 和路由学习结果。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>配置文件字段示例</h2>
+            <h3>server.json</h3>
+            <pre><code>{
+  "mode": "server",
+  "listen_addrs": ["0.0.0.0:9443"],
+  "token": "change-me-to-a-long-random-token",
+  "tunnel_protocol": "native",
+  "tunnel_transport": "raw",
+  "tunnel_path": "/proxy"
+}</code></pre>
+            <h3>client.json</h3>
+            <pre><code>{
+  "mode": "client",
+  "listen_addrs": ["127.0.0.1:1080"],
+  "server_addr": "proxy.example.com:9443",
+  "token": "change-me-to-a-long-random-token",
+  "tunnel_protocol": "native",
+  "tunnel_transport": "raw",
+  "tunnel_path": "/proxy",
+  "upstream_protocol": "socks5"
+}</code></pre>
+            <h3>route.json</h3>
+            <pre><code>{
+  "force_upstream": {
+    "domains": [],
+    "domain_regexes": [],
+    "domain_suffixes": [],
+    "ip_cidrs": [],
+    "ip_ranges": [],
+    "ips": []
+  }
+}</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>每类生成参数怎么填</h2>
+            <table class="doc-table">
+              <thead><tr><th>类别</th><th>参数</th><th>具体填法</th></tr></thead>
+              <tbody>
+                <tr><td>协议</td><td><code>--protocol</code></td><td><code>native</code> 自用优先；<code>vless</code> 对接 VLESS/REALITY；<code>vmess</code> 对接 VMess AEAD；<code>trojan</code> 对接 Trojan。</td></tr>
+                <tr><td>transport</td><td><code>--transport</code></td><td><code>raw</code> 最低开销；<code>ws</code> 适合 nginx/CDN；<code>h2</code> 适合 HTTP/2；<code>h3</code> 适合 QUIC/HTTP/3。</td></tr>
+                <tr><td>监听</td><td><code>--server-listen</code>、<code>--client-listen</code></td><td>多个地址用英文逗号分隔，例如 <code>0.0.0.0:443,[::]:443</code>。</td></tr>
+                <tr><td>认证</td><td><code>--token</code></td><td>VLESS/VMess 必须是 UUID；native/Trojan 可以是长随机字符串。留空自动生成。</td></tr>
+                <tr><td>TLS</td><td><code>--tls</code>、<code>--tls-cert</code>、<code>--tls-key</code>、<code>--tls-server-name</code></td><td>服务端写证书和私钥路径，客户端写启用 TLS 和校验名称。</td></tr>
+                <tr><td>REALITY</td><td><code>--tunnel-security reality</code> 及 <code>--reality-*</code></td><td>只能配合 <code>--protocol vless --transport raw</code>。生成 both/server 时 private key 可留空自动生成。</td></tr>
+                <tr><td>mux</td><td><code>--mux true|false</code></td><td>只建议 native 开启。其他兼容协议通常不使用项目内 mux。</td></tr>
+                <tr><td>本地认证</td><td><code>--client-socks5-username</code>、<code>--client-socks5-password</code></td><td>写入客户端本地 SOCKS5 入口认证；用户名或密码任一非空都会启用认证。</td></tr>
+                <tr><td>路由</td><td><code>--force-ip-cidrs</code></td><td>生成 route.json 时预置强制上游 CIDR，例如 <code>1.1.1.0/24,8.8.8.8/32</code>。</td></tr>
+              </tbody>
+            </table>
+            <div class="doc-next">
+              <a class="button primary" href="client-server.html">下一步：client/server 部署</a>
+              <a class="button secondary" href="reference.html">查看完整参数参考</a>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

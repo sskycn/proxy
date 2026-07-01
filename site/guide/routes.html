@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>路由规则 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun route.json 路由规则教程，包含 force_upstream 域名、后缀、正则、IP、CIDR 和直连学习。">
+    <link rel="canonical" href="https://tcptun.com/guide/routes.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="local.html">local</a><a href="client-server.html">client/server</a><a href="reference.html">参数参考</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero"><div><p class="eyebrow">路由规则</p><h1>用 route.json 控制哪些目标必须走上游。</h1><p class="lede">tcptun 对 TCP 目标默认直连优先，失败后学习并写回。你也可以用 force_upstream 规则提前指定域名、后缀、正则、IP 和 CIDR。</p></div><div class="doc-card"><h3>优先级</h3><p><code>force_upstream</code> 规则优先于直连探测。命中规则时，目标直接走上游或 client/server 隧道。</p></div></section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a class="active" href="routes.html">路由规则</a><a href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>完整 route.json 示例</h2>
+            <pre><code>{
+  "force_upstream": {
+    "domains": ["example.com", "api.example.net"],
+    "domain_regexes": ["(^|\\\\.)example-cdn\\\\.com$"],
+    "domain_suffixes": ["google.com", "github.com"],
+    "ip_cidrs": ["8.8.8.0/24", "2001:4860::/32"],
+    "ip_ranges": ["1.1.1.0/24"],
+    "ips": ["9.9.9.9"]
+  }
+}</code></pre>
+            <p>字段都可以为空数组。建议保留所有字段，后续人工维护和程序写回都更直观。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>每种规则怎么写</h2>
+            <table class="doc-table">
+              <thead><tr><th>字段</th><th>匹配方式</th><th>例子</th><th>使用建议</th></tr></thead>
+              <tbody>
+                <tr><td><code>domains</code></td><td>精确域名</td><td><code>api.example.com</code></td><td>只想让一个明确 host 走上游时使用。</td></tr>
+                <tr><td><code>domain_suffixes</code></td><td>后缀及其子域名</td><td><code>github.com</code></td><td>想让整个站点族走上游时使用，通常比正则更快更清晰。</td></tr>
+                <tr><td><code>domain_regexes</code></td><td>Go/RE2 正则</td><td><code>(^|\\.)example-cdn\\.com$</code></td><td>复杂模式才使用，注意 JSON 里反斜杠要转义。</td></tr>
+                <tr><td><code>ips</code></td><td>精确 IP</td><td><code>9.9.9.9</code></td><td>目标是固定 IP 时使用。</td></tr>
+                <tr><td><code>ip_cidrs</code></td><td>CIDR 前缀</td><td><code>8.8.8.0/24</code></td><td>IP 段走上游，支持 IPv4 和 IPv6。</td></tr>
+                <tr><td><code>ip_ranges</code></td><td>CIDR 风格别名</td><td><code>1.1.1.0/24</code></td><td>解析方式与 <code>ip_cidrs</code> 相同。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>命令行预置 CIDR</h2>
+            <p><code>tcptun config</code> 可以在生成 route.json 时预置 IP CIDR。</p>
+            <pre><code>tcptun config \
+  --server-addr proxy.example.com:9443 \
+  --force-ip-cidrs 8.8.8.0/24,2001:4860::/32</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>直连优先与自动学习</h2>
+            <p>如果目标没有命中强制上游规则，TCP 流量会先尝试直连：</p>
+            <ul>
+              <li>普通 HTTP 请求需要在 <code>direct_probe_timeout</code> 内收到直连目标返回的首字节。</li>
+              <li>HTTP CONNECT 和 SOCKS5 CONNECT 会等待客户端首个隧道数据包，发给直连目标后再等待响应。</li>
+              <li>探测失败时，该目标会标记为仅走上游，并在退出时合并写入 route.json。</li>
+              <li>UDP 规则更保守：内网 UDP 目标直连，其他 UDP 目标走上游。</li>
+            </ul>
+            <pre><code>{
+  "mode": "client",
+  "direct_probe_timeout": "800ms"
+}</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>写回和去重</h2>
+            <p>程序退出前会把学习到的直连失败目标合并进 <code>route.json</code>。已有规则会去重。某个可注册主域名下超过 3 个子域名进入 <code>domains</code> 后，会提升为 <code>domain_suffixes</code>，减少规则数量。</p>
+            <p>如果不希望写回，传入空路由路径禁用路由加载和写回：</p>
+            <pre><code>tcptun client --config client.json --route-config ""</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>场景示例</h2>
+            <h3>让常用开发服务走上游</h3>
+            <pre><code>{
+  "force_upstream": {
+    "domains": ["registry.npmjs.org"],
+    "domain_regexes": [],
+    "domain_suffixes": ["github.com", "githubusercontent.com"],
+    "ip_cidrs": [],
+    "ip_ranges": [],
+    "ips": []
+  }
+}</code></pre>
+            <h3>让指定 DNS 服务 IP 段走上游</h3>
+            <pre><code>{
+  "force_upstream": {
+    "domains": [],
+    "domain_regexes": [],
+    "domain_suffixes": [],
+    "ip_cidrs": ["1.1.1.0/24", "8.8.8.0/24"],
+    "ip_ranges": [],
+    "ips": ["9.9.9.9"]
+  }
+}</code></pre>
+            <div class="doc-next"><a class="button primary" href="reference.html">下一步：参数参考</a><a class="button secondary" href="local.html">回到 local 教程</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

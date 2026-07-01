@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>transport、TLS、REALITY - tcptun 使用教程</title>
+    <meta name="description" content="tcptun raw、WebSocket、HTTP/2、HTTP/3、TLS、REALITY/Vision 和 nginx 反代配置教程。">
+    <link rel="canonical" href="https://tcptun.com/guide/transports.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="protocols.html">协议</a><a href="client-server.html">client/server</a><a href="routes.html">路由</a><a href="reference.html">参数参考</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero"><div><p class="eyebrow">transport 与安全层</p><h1>raw、ws、h2、h3、TLS、REALITY 每种外层配置怎么填。</h1><p class="lede">协议负责隧道内容，transport 负责把隧道放到 TCP、WebSocket、HTTP/2 或 HTTP/3 上。TLS 和 REALITY 是安全层，不要混淆。</p></div><div class="doc-card"><h3>选择建议</h3><p>直连端口用 <code>raw</code>；nginx/CDN 后面用 <code>ws</code>；HTTP/2 基础设施用 <code>h2</code>；需要 QUIC 时用 <code>h3</code>；VLESS REALITY/Vision 用 <code>raw</code> + <code>reality</code>。</p></div></section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a class="active" href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>transport 对比</h2>
+            <table class="doc-table">
+              <thead><tr><th>transport</th><th>参数值</th><th>适合场景</th><th>必须注意</th></tr></thead>
+              <tbody>
+                <tr><td>raw TCP</td><td><code>raw</code></td><td>最低开销、直连端口、TLS、Trojan、REALITY</td><td>没有 HTTP 路径语义；防火墙需放行 TCP 端口。</td></tr>
+                <tr><td>WebSocket</td><td><code>ws</code></td><td>nginx、HTTP/1.1 反代、常见 CDN</td><td>client/server 的 <code>tunnel_path</code> 必须一致。</td></tr>
+                <tr><td>HTTP/2</td><td><code>h2</code></td><td>HTTP/2 upstream</td><td>无证书时 server 可用 h2c；有证书时使用 TLS HTTP/2。</td></tr>
+                <tr><td>HTTP/3</td><td><code>h3</code></td><td>QUIC/HTTP/3</td><td>server 必须配置证书和私钥；需要 UDP 端口可达。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>raw：最低开销</h2>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --server-listen 0.0.0.0:9443</code></pre>
+            <p>raw 适合服务器直开端口。没有 TLS 时，外层就是普通 TCP；需要 TLS 时加 <code>--tls</code>、证书和 server name。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>raw + TLS</h2>
+            <p>服务端需要证书和私钥，客户端需要启用 TLS 并设置校验域名。</p>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --tls \
+  --tls-cert /etc/letsencrypt/live/proxy.example.com/fullchain.pem \
+  --tls-key /etc/letsencrypt/live/proxy.example.com/privkey.pem \
+  --tls-server-name proxy.example.com \
+  --server-addr proxy.example.com:443 \
+  --server-listen 0.0.0.0:443</code></pre>
+            <p>只在测试时使用 <code>--tls-insecure</code>，它会让客户端跳过证书校验。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>WebSocket：放在 nginx 后面</h2>
+            <p>tcptun server 监听本机回环地址，nginx 对外监听 443 并把指定路径反代给 tcptun。</p>
+            <pre><code>tcptun server \
+  --listen 127.0.0.1:9443 \
+  --tunnel-protocol native \
+  --transport ws \
+  --tunnel-path /tcptun \
+  --token change-me
+
+tcptun client \
+  --listen 127.0.0.1:1080 \
+  --server-addr proxy.example.com:443 \
+  --tunnel-protocol native \
+  --transport ws \
+  --tunnel-path /tcptun \
+  --tls \
+  --tls-server-name proxy.example.com \
+  --token change-me</code></pre>
+            <pre><code>location /tcptun {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_pass http://127.0.0.1:9443;
+}</code></pre>
+            <p><code>--tunnel-path</code> 必须以 <code>/</code> 开头。生成器会自动把 <code>tcptun</code> 规范成 <code>/tcptun</code>。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>HTTP/2</h2>
+            <pre><code>tcptun server \
+  --listen 127.0.0.1:9443 \
+  --transport h2 \
+  --tunnel-path /tcptun \
+  --token change-me
+
+tcptun client \
+  --server-addr 127.0.0.1:9443 \
+  --transport h2 \
+  --tunnel-path /tcptun \
+  --token change-me</code></pre>
+            <p>如果配置证书，server 使用 TLS HTTP/2；没有证书时可用于 h2c 场景。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>HTTP/3</h2>
+            <p>HTTP/3 基于 QUIC，服务端需要证书和私钥，防火墙要放行对应 UDP 端口。</p>
+            <pre><code>tcptun server \
+  --listen 0.0.0.0:9443 \
+  --transport h3 \
+  --tunnel-path /tcptun \
+  --tls-cert /etc/letsencrypt/live/proxy.example.com/fullchain.pem \
+  --tls-key /etc/letsencrypt/live/proxy.example.com/privkey.pem \
+  --token change-me
+
+tcptun client \
+  --server-addr proxy.example.com:9443 \
+  --transport h3 \
+  --tunnel-path /tcptun \
+  --token change-me</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>VLESS REALITY/Vision</h2>
+            <p>REALITY 是 VLESS 的安全层配置，不是普通 TLS。它需要 <code>--protocol vless</code>、<code>--transport raw</code>、<code>--tunnel-security reality</code>。不能和 <code>--tls</code> 同时使用。</p>
+            <pre><code>tcptun config \
+  --protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision \
+  --server-addr proxy.example.com:443 \
+  --server-listen 0.0.0.0:443 \
+  --reality-server-name www.example.com \
+  --reality-server-names www.example.com \
+  --reality-fingerprint chrome \
+  --reality-short-id '' \
+  --reality-short-ids '' \
+  --reality-dest www.example.com:443 \
+  --reality-spider-x /</code></pre>
+            <p>字段解释：</p>
+            <ul>
+              <li><code>reality_private_key</code>：服务端私钥。生成 both/server 且留空时会自动生成。</li>
+              <li><code>reality_public_key</code>：客户端公钥。生成器可由 private key 推导；只生成 client 时必须提供。</li>
+              <li><code>reality_server_name</code>：客户端发出的 serverName。</li>
+              <li><code>reality_server_names</code>：服务端允许的 serverName 列表。</li>
+              <li><code>reality_short_id</code> 与 <code>reality_short_ids</code>：客户端单个 shortId 与服务端允许列表，十六进制字符串，允许为空。</li>
+              <li><code>reality_dest</code>：REALITY fallback 目标，格式 <code>host:port</code>。</li>
+              <li><code>reality_fingerprint</code>：客户端 uTLS 指纹，例如 <code>chrome</code>。</li>
+            </ul>
+            <div class="doc-callout"><h3>密钥安全</h3><p>不要把真实 UUID、REALITY private key、public key 或服务器地址提交进公开仓库。文档里只使用占位值。</p></div>
+            <div class="doc-next"><a class="button primary" href="routes.html">下一步：路由规则</a><a class="button secondary" href="reference.html">查看字段参考</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

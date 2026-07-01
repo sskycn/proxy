@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>client/server 部署 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun client/server 模式部署教程，包含 VPS 服务端、本机客户端、systemd、端口、测试和常见问题。">
+    <link rel="canonical" href="https://tcptun.com/guide/client-server.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="config.html">配置生成</a><a href="protocols.html">协议</a><a href="transports.html">transport</a><a href="routes.html">路由</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero">
+        <div><p class="eyebrow">client/server 模式</p><h1>远端跑 server，本机跑 client，应用只连接本地代理端口。</h1><p class="lede">这是自建隧道的标准部署方式。server 负责接收隧道并在远端连接真实目标；client 负责把本机 mixed 代理流量封装进隧道。</p></div>
+        <div class="doc-card"><h3>数据流</h3><p>浏览器或 CLI → <code>127.0.0.1:1080</code> → tcptun client → 隧道 → tcptun server → 目标网站。</p></div>
+      </section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a class="active" href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>1. 生成 native/raw 配置</h2>
+            <p>把域名和端口换成你的服务器。没有域名时可以先写服务器 IP，例如 <code>203.0.113.10:9443</code>。</p>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --server-listen 0.0.0.0:9443 \
+  --client-listen 127.0.0.1:1080 \
+  --overwrite</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>2. 部署服务端</h2>
+            <p>把二进制和 <code>server.json</code> 放到服务器，例如 <code>/opt/tcptun/</code>。</p>
+            <pre><code>sudo mkdir -p /opt/tcptun
+sudo cp tcptun /opt/tcptun/tcptun
+sudo cp server.json /opt/tcptun/server.json
+sudo chmod 755 /opt/tcptun/tcptun
+sudo chmod 600 /opt/tcptun/server.json</code></pre>
+            <p>前台测试运行：</p>
+            <pre><code>cd /opt/tcptun
+sudo ./tcptun server --config ./server.json --verbose</code></pre>
+            <p>确认云防火墙和系统防火墙放行监听端口，例如 TCP <code>9443</code>。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>3. 用 systemd 常驻运行</h2>
+            <pre><code>[Unit]
+Description=tcptun server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/tcptun
+ExecStart=/opt/tcptun/tcptun server --config /opt/tcptun/server.json
+Restart=on-failure
+RestartSec=3
+User=nobody
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+            <pre><code>sudo install -m 0644 tcptun-server.service /etc/systemd/system/tcptun-server.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now tcptun-server
+sudo systemctl status tcptun-server</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>4. 本机启动 client</h2>
+            <pre><code>tcptun client \
+  --config ./client.json \
+  --route-config ./route.json \
+  --verbose</code></pre>
+            <p>也可以不用 JSON，全部从命令行传：</p>
+            <pre><code>tcptun client \
+  --listen 127.0.0.1:1080 \
+  --server-addr proxy.example.com:9443 \
+  --token change-me-to-the-same-token \
+  --tunnel-protocol native \
+  --transport raw</code></pre>
+            <p><code>--token</code> 必须和服务端一致；<code>--tunnel-protocol</code>、<code>--transport</code>、<code>--tunnel-path</code>、TLS/REALITY 参数也必须匹配。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>5. 测试 TCP 和 HTTP 代理</h2>
+            <pre><code>curl -x socks5h://127.0.0.1:1080 https://ifconfig.me
+curl -x http://127.0.0.1:1080 https://example.com
+curl -v -x http://127.0.0.1:1080 https://www.google.com</code></pre>
+            <p>如果使用浏览器，HTTP proxy 和 SOCKS5 proxy 都可以填 <code>127.0.0.1</code>、端口 <code>1080</code>。SOCKS5 更适合让域名也走代理解析。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>服务端出站限制</h2>
+            <p>tcptun server 只允许连接公网目标 IP。私有地址、回环地址、链路本地、组播、CGNAT 和保留网段会在拨号前被拒绝。这避免把公网服务端变成内网探测跳板。</p>
+            <p>如果你访问的是内网地址，应使用 local 模式或把服务端部署在那个内网里。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>多监听地址</h2>
+            <p>服务端和客户端都支持多个监听地址。命令行使用英文逗号分隔，JSON 使用数组。</p>
+            <pre><code>tcptun server --listen 0.0.0.0:9443,[::]:9443 --config server.json</code></pre>
+            <pre><code>{
+  "listen_addrs": ["0.0.0.0:9443", "[::]:9443"]
+}</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>常见部署组合</h2>
+            <div class="doc-grid">
+              <article class="doc-card"><h3>性能优先</h3><pre><code>--protocol native
+--transport raw
+--mux true</code></pre><p>自己控制两端时优先用这个。native 支持项目内 mux 和完整 UDP relay。</p></article>
+              <article class="doc-card"><h3>域名和 TLS</h3><pre><code>--transport raw --tls
+--tls-cert fullchain.pem
+--tls-key privkey.pem
+--tls-server-name proxy.example.com</code></pre><p>适合普通 HTTPS 端口部署，客户端会做证书校验。</p></article>
+              <article class="doc-card"><h3>nginx 后面</h3><pre><code>--transport ws
+--tunnel-path /tcptun</code></pre><p>server 监听 <code>127.0.0.1</code>，nginx 把 WebSocket 路径反代过去。</p></article>
+              <article class="doc-card"><h3>REALITY/Vision</h3><pre><code>--protocol vless
+--transport raw
+--tunnel-security reality
+--flow xtls-rprx-vision</code></pre><p>对接 VLESS REALITY/Vision 场景，参数见 transport 页面。</p></article>
+            </div>
+            <div class="doc-next"><a class="button primary" href="protocols.html">下一步：选择协议</a><a class="button secondary" href="transports.html">配置 transport/TLS</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

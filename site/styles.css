@@ -482,6 +482,165 @@ textarea {
   font-size: 14px;
 }
 
+.doc-main {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+}
+
+.doc-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.5fr);
+  gap: 34px;
+  align-items: start;
+  padding: 58px 0 42px;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-hero h1 {
+  max-width: 900px;
+  font-size: clamp(38px, 6vw, 64px);
+}
+
+.doc-hero .lede {
+  max-width: 800px;
+}
+
+.doc-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+  padding: 38px 0 84px;
+}
+
+.doc-sidebar {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(23, 33, 43, 0.92);
+}
+
+.doc-sidebar a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.doc-sidebar a:hover,
+.doc-sidebar a.active {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.doc-content {
+  min-width: 0;
+}
+
+.doc-section {
+  padding: 0 0 42px;
+  border-bottom: 1px solid rgba(45, 59, 71, 0.78);
+  margin-bottom: 42px;
+}
+
+.doc-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.doc-section h2 {
+  font-size: clamp(26px, 4vw, 38px);
+}
+
+.doc-section h3 {
+  margin-top: 26px;
+  font-size: 20px;
+}
+
+.doc-section p,
+.doc-section li,
+.doc-card p,
+.doc-card li {
+  color: var(--muted);
+}
+
+.doc-section ul,
+.doc-section ol {
+  padding-left: 22px;
+}
+
+.doc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.doc-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.doc-card,
+.doc-callout {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(23, 33, 43, 0.96), rgba(20, 28, 36, 0.96));
+  padding: 20px;
+}
+
+.doc-callout {
+  margin: 20px 0;
+  border-color: rgba(94, 224, 183, 0.38);
+}
+
+.doc-card h3,
+.doc-callout h3 {
+  margin-top: 0;
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.doc-table th,
+.doc-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-table th {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.doc-table td {
+  color: var(--muted);
+}
+
+.doc-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.doc-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
 @media (max-width: 900px) {
   .topbar {
     align-items: flex-start;
@@ -500,8 +659,14 @@ textarea {
 
   .hero,
   .split,
-  .download {
+  .download,
+  .doc-hero,
+  .doc-shell {
     grid-template-columns: 1fr;
+  }
+
+  .doc-sidebar {
+    position: static;
   }
 
   .hero {
@@ -516,7 +681,9 @@ textarea {
   .steps,
   .guide-notes,
   .converter,
-  .generator {
+  .generator,
+  .doc-grid,
+  .doc-grid.three {
     grid-template-columns: 1fr;
   }
 }
@@ -538,6 +705,19 @@ textarea {
   .output-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .doc-table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .doc-table thead,
+  .doc-table tbody {
+    display: table;
+    width: 100%;
+    min-width: 640px;
+    table-layout: fixed;
   }
 
   .footer {

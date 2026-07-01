@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>local 网关模式 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun local 模式教程：自动发现网关、扫描局域网、上游协议、本地认证和性能参数。">
+    <link rel="canonical" href="https://tcptun.com/guide/local.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="config.html">配置生成</a><a href="client-server.html">client/server</a><a href="routes.html">路由</a><a href="reference.html">参数参考</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero">
+        <div><p class="eyebrow">local 模式</p><h1>让本机 mixed 代理自动接入局域网里的上游网关。</h1><p class="lede">local 模式不需要远端 tcptun server。它在本机开一个 mixed 代理端口，然后把需要走上游的流量转发到局域网网关代理。</p></div>
+        <div class="doc-card"><h3>适合场景</h3><ul><li>路由器或旁路网关已经开了代理端口。</li><li>同一局域网另一台机器运行 SOCKS5/mixed。</li><li>你希望本机应用统一连 <code>127.0.0.1:1080</code>。</li></ul></div>
+      </section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a class="active" href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>最小启动</h2>
+            <pre><code>tcptun local</code></pre>
+            <p>默认行为：</p>
+            <ul>
+              <li>本机监听 <code>127.0.0.1:1080</code>。</li>
+              <li>上游网关端口默认是 <code>1080</code>。</li>
+              <li>上游协议默认是 <code>socks5</code>。</li>
+              <li>会尝试自动发现默认网关 IP；如果不可连，会扫描本机所在内网 IPv4 网段。</li>
+              <li>会读取 <code>config.json</code> 和 <code>route.json</code>，除非你显式传入空路径禁用。</li>
+            </ul>
+          </section>
+
+          <section class="doc-section">
+            <h2>固定网关 IP</h2>
+            <p>如果你知道网关 IP，建议显式指定。这样不会扫描网段，启动更直接。</p>
+            <pre><code>tcptun local \
+  --listen 127.0.0.1:1080 \
+  --gateway-ip 192.168.1.1 \
+  --gateway-port 7890</code></pre>
+            <p>参数含义：</p>
+            <ul>
+              <li><code>--listen</code>：本机代理监听地址。只给本机用时保持 <code>127.0.0.1</code>；要给局域网其他设备用才改成 <code>0.0.0.0</code>。</li>
+              <li><code>--gateway-ip</code>：上游网关 IP，例如路由器、旁路由或代理机器。</li>
+              <li><code>--gateway-port</code>：网关代理端口。常见是 <code>1080</code>、<code>7890</code> 或 <code>10808</code>。</li>
+            </ul>
+          </section>
+
+          <section class="doc-section">
+            <h2>上游协议：socks5 还是 mixed</h2>
+            <table class="doc-table">
+              <thead><tr><th>值</th><th>适合上游</th><th>行为</th></tr></thead>
+              <tbody>
+                <tr><td><code>socks5</code></td><td>上游只支持 SOCKS5</td><td>tcptun 会解析本地 HTTP/SOCKS5 请求，再转换成 SOCKS5 发给上游。未知 mixed 流量会被拒绝。</td></tr>
+                <tr><td><code>mixed</code></td><td>上游同时支持 HTTP proxy 和 SOCKS5</td><td>HTTP 代理和未知 mixed 流量会原样发给网关；SOCKS5 TCP/UDP 仍走 SOCKS5 协商。</td></tr>
+              </tbody>
+            </table>
+            <pre><code>tcptun local \
+  --gateway-ip 192.168.1.1 \
+  --gateway-port 7890 \
+  --upstream-protocol mixed</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>本地 SOCKS5 入口加用户名密码</h2>
+            <p>如果你把监听地址暴露给局域网，例如 <code>0.0.0.0:1080</code>，建议加认证。用户名或密码任一非空时，SOCKS5 会启用 username/password 认证。</p>
+            <pre><code>tcptun local \
+  --listen 0.0.0.0:1080 \
+  --gateway-ip 192.168.1.1 \
+  --gateway-port 7890 \
+  --socks5-username alice \
+  --socks5-password 'use-a-long-password'</code></pre>
+            <p>HTTP proxy 入口不使用这组 SOCKS5 凭据；这组参数只控制本地 SOCKS5 客户端认证。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>连接需要认证的上游 SOCKS5</h2>
+            <p>如果局域网网关的 SOCKS5 端口本身要求用户名密码，用上游凭据参数。</p>
+            <pre><code>tcptun local \
+  --gateway-ip 192.168.1.1 \
+  --gateway-port 1080 \
+  --upstream-socks5-username gateway-user \
+  --upstream-socks5-password 'gateway-password'</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>用 config.json 固化 local 配置</h2>
+            <pre><code>{
+  "mode": "local",
+  "listen_addrs": ["127.0.0.1:1080"],
+  "upstream_protocol": "mixed",
+  "socks5_username": "alice",
+  "socks5_password": "use-a-long-password",
+  "upstream_socks5_username": "gateway-user",
+  "upstream_socks5_password": "gateway-password",
+  "direct_probe_timeout": "500ms",
+  "scan_retry_interval": "5s"
+}</code></pre>
+            <p>注意：<code>gateway_ip</code>、<code>gateway_port</code>、<code>scan_workers</code>、<code>scan_timeout</code>、<code>refresh_interval</code> 这些是 CLI/API 参数，不会从运行配置 JSON 加载，需要通过命令行传入。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>网关发现和扫描怎么工作</h2>
+            <ol>
+              <li>检查本机是否有内网 IPv4 地址。</li>
+              <li>发现系统默认网关 IP。</li>
+              <li>尝试连接 <code>&lt;网关IP&gt;:&lt;gateway-port&gt;</code>。</li>
+              <li>如果失败，扫描本机内网 IPv4 网段，寻找打开了目标端口的主机。</li>
+              <li>如果找到多个候选，会按连接延迟排序，并让同一个源 IP 尽量保持使用同一个上游。</li>
+              <li>如果没有找到，会等待 <code>--scan-retry-interval</code> 后重试。</li>
+            </ol>
+            <pre><code>tcptun local \
+  --gateway-port 7890 \
+  --scan-timeout 200ms \
+  --scan-workers 256 \
+  --refresh-interval 5s \
+  --scan-retry-interval 10s</code></pre>
+            <div class="doc-callout"><h3>性能建议</h3><p>局域网大、机器多时可以提高 <code>--scan-workers</code>，但不要无限加大；扫描超时 <code>--scan-timeout</code> 过短会漏掉慢设备，过长会拖慢启动。</p></div>
+          </section>
+
+          <section class="doc-section">
+            <h2>应用怎么使用</h2>
+            <pre><code>curl -x socks5h://127.0.0.1:1080 https://ifconfig.me
+curl -x http://127.0.0.1:1080 https://example.com</code></pre>
+            <p>浏览器里把 SOCKS5 或 HTTP 代理都设置到 <code>127.0.0.1:1080</code>。如果使用 SOCKS5，建议开启“通过代理解析 DNS”或使用支持远端解析的客户端。</p>
+            <div class="doc-next"><a class="button primary" href="routes.html">下一步：配置路由规则</a><a class="button secondary" href="reference.html">查看参数参考</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

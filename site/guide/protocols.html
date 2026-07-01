@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>协议配置 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun native、VLESS、VMess、Trojan 协议配置教程，包含命令和 JSON 示例。">
+    <link rel="canonical" href="https://tcptun.com/guide/protocols.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="config.html">配置生成</a><a href="client-server.html">client/server</a><a href="transports.html">transport</a><a href="reference.html">参数参考</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero"><div><p class="eyebrow">协议配置</p><h1>native、VLESS、VMess、Trojan 每一种协议怎么配。</h1><p class="lede">协议决定认证材料格式和兼容目标；transport 决定外层承载方式。自用优先 native，需要兼容 Xray/V2Ray 时选择 VLESS、VMess 或 Trojan。</p></div><div class="doc-card"><h3>一句话选择</h3><p>自用性能和功能优先：<code>native</code>。REALITY/Vision：<code>vless</code>。VMess AEAD：<code>vmess</code>。Trojan 兼容：<code>trojan</code>。</p></div></section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a class="active" href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>能力对比</h2>
+            <table class="doc-table">
+              <thead><tr><th>协议</th><th>token 格式</th><th>TCP</th><th>UDP relay</th><th>mux</th><th>兼容目标</th></tr></thead>
+              <tbody>
+                <tr><td><code>native</code></td><td>长随机字符串</td><td>支持</td><td>支持</td><td>支持</td><td>tcptun 自有协议</td></tr>
+                <tr><td><code>vless</code></td><td>UUID</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>VLESS TCP/UDP、REALITY/Vision</td></tr>
+                <tr><td><code>vmess</code></td><td>UUID</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>VMess AEAD，security none</td></tr>
+                <tr><td><code>trojan</code></td><td>password</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>Trojan TCP/UDP</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>native：自用推荐</h2>
+            <p>native 是项目自己的隧道协议，适合同时控制 client 和 server 的场景。它支持 TCP、SOCKS5 UDP relay 和 tunnel mux。</p>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --server-listen 0.0.0.0:9443 \
+  --client-listen 127.0.0.1:1080</code></pre>
+            <p>命令行手动运行：</p>
+            <pre><code>tcptun server \
+  --listen 0.0.0.0:9443 \
+  --tunnel-protocol native \
+  --transport raw \
+  --token change-me-to-a-long-random-token \
+  --mux true
+
+tcptun client \
+  --listen 127.0.0.1:1080 \
+  --server-addr proxy.example.com:9443 \
+  --tunnel-protocol native \
+  --transport raw \
+  --token change-me-to-a-long-random-token \
+  --mux true</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>VLESS：UUID 认证，可配 REALITY</h2>
+            <p>VLESS 的 <code>token</code> 必须是 UUID。普通 VLESS 可以配 raw/ws/h2/h3；REALITY/Vision 只能用 VLESS + raw + reality。</p>
+            <pre><code>tcptun config \
+  --protocol vless \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --token 00000000-0000-4000-8000-000000000000</code></pre>
+            <pre><code>{
+  "mode": "client",
+  "listen_addrs": ["127.0.0.1:1080"],
+  "server_addr": "proxy.example.com:9443",
+  "token": "00000000-0000-4000-8000-000000000000",
+  "tunnel_protocol": "vless",
+  "tunnel_transport": "raw"
+}</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>VMess：对接 VMess AEAD</h2>
+            <p>VMess 的 <code>token</code> 也必须是 UUID。兼容目标是 VMess AEAD，security none。</p>
+            <pre><code>tcptun server \
+  --listen 0.0.0.0:9443 \
+  --tunnel-protocol vmess \
+  --transport raw \
+  --token 00000000-0000-4000-8000-000000000000
+
+tcptun client \
+  --listen 127.0.0.1:1080 \
+  --server-addr proxy.example.com:9443 \
+  --tunnel-protocol vmess \
+  --transport raw \
+  --token 00000000-0000-4000-8000-000000000000</code></pre>
+            <p>如果用配置生成器，留空 <code>--token</code> 会自动生成 UUID。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>Trojan：password 认证，通常搭配 TLS</h2>
+            <p>Trojan 的 <code>token</code> 是 Trojan password。生产环境建议使用 raw + TLS，并使用可信证书。</p>
+            <pre><code>tcptun config \
+  --protocol trojan \
+  --transport raw \
+  --tls \
+  --tls-cert /etc/letsencrypt/live/proxy.example.com/fullchain.pem \
+  --tls-key /etc/letsencrypt/live/proxy.example.com/privkey.pem \
+  --tls-server-name proxy.example.com \
+  --server-addr proxy.example.com:443 \
+  --server-listen 0.0.0.0:443</code></pre>
+            <p>生成后的服务端会写 <code>tunnel_tls_cert</code> 和 <code>tunnel_tls_key</code>；客户端会写 <code>tunnel_tls: true</code> 和 <code>tunnel_tls_server_name</code>。</p>
+          </section>
+
+          <section class="doc-section">
+            <h2>常见错误</h2>
+            <ul>
+              <li>VLESS/VMess 的 token 不是 UUID：生成器会报 <code>--token must be a UUID</code>。</li>
+              <li>client 和 server 协议不一致：握手失败，连接无法建立。</li>
+              <li>client 和 server transport/path/TLS 不一致：看起来端口通，但应用请求失败。</li>
+              <li>在非 native 协议上期待 tunnel mux：项目内 mux 只适合 native。</li>
+            </ul>
+            <div class="doc-next"><a class="button primary" href="transports.html">下一步：transport 与安全层</a><a class="button secondary" href="reference.html">查看参数参考</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

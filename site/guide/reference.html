@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>参数参考 - tcptun 使用教程</title>
+    <meta name="description" content="tcptun CLI 和 JSON 参数参考，覆盖 local、client、server、config、TLS、REALITY、路由和性能参数。">
+    <link rel="canonical" href="https://tcptun.com/guide/reference.html">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar"><a class="brand" href="../"><img class="brand-icon" src="../icon.svg?v=20260701-2" alt=""><span>tcptun</span></a><nav class="nav"><a href="./">教程首页</a><a href="config.html">配置生成</a><a href="local.html">local</a><a href="client-server.html">client/server</a><a href="routes.html">路由</a></nav></header>
+    <main class="doc-main">
+      <section class="doc-hero"><div><p class="eyebrow">参数参考</p><h1>CLI flag 和 JSON 字段逐项查。</h1><p class="lede">这一页把运行配置、生成器参数、路由字段和只支持命令行/API 的性能参数放在一起，方便复制时核对。</p></div><div class="doc-card"><h3>配置路径搜索</h3><p>相对路径会按程序所在目录、当前工作目录、<code>~/.config/tcptun</code> 搜索。显式 <code>--config ""</code> 可禁用运行配置加载。</p></div></section>
+      <section class="doc-shell">
+        <aside class="doc-sidebar"><a href="./">教程首页</a><a href="config.html">配置生成与文件</a><a href="local.html">local 网关模式</a><a href="client-server.html">client/server 模式</a><a href="protocols.html">协议配置</a><a href="transports.html">transport、TLS、REALITY</a><a href="routes.html">路由规则</a><a class="active" href="reference.html">参数参考</a></aside>
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>运行配置 JSON 字段</h2>
+            <table class="doc-table">
+              <thead><tr><th>字段</th><th>适用</th><th>例子</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>mode</code></td><td>local/client/server</td><td><code>"client"</code></td><td>不带子命令运行时按它决定模式；显式子命令优先。</td></tr>
+                <tr><td><code>listen_addrs</code></td><td>全部</td><td><code>["127.0.0.1:1080"]</code></td><td>监听地址列表；旧字段 <code>listen_addr</code> 不再支持。</td></tr>
+                <tr><td><code>server_addr</code></td><td>client</td><td><code>"proxy.example.com:443"</code></td><td>客户端连接的服务端地址。</td></tr>
+                <tr><td><code>token</code></td><td>client/server</td><td><code>"..."</code></td><td>native 共享 token、VLESS/VMess UUID、Trojan password。</td></tr>
+                <tr><td><code>tunnel_protocol</code></td><td>client/server</td><td><code>"native"</code></td><td><code>native</code>、<code>vless</code>、<code>vmess</code>、<code>trojan</code>。</td></tr>
+                <tr><td><code>tunnel_transport</code></td><td>client/server</td><td><code>"raw"</code></td><td><code>raw</code>、<code>ws</code>、<code>h2</code>、<code>h3</code>。</td></tr>
+                <tr><td><code>tunnel_path</code></td><td>client/server</td><td><code>"/tcptun"</code></td><td>ws/h2/h3 路径；raw 通常不关心。</td></tr>
+                <tr><td><code>tunnel_tls</code></td><td>client</td><td><code>true</code></td><td>客户端使用 TLS 连接 raw/ws/h2 服务端。</td></tr>
+                <tr><td><code>tunnel_tls_cert</code></td><td>server</td><td><code>"/path/fullchain.pem"</code></td><td>服务端证书路径。</td></tr>
+                <tr><td><code>tunnel_tls_key</code></td><td>server</td><td><code>"/path/privkey.pem"</code></td><td>服务端私钥路径。</td></tr>
+                <tr><td><code>tunnel_tls_server_name</code></td><td>client</td><td><code>"proxy.example.com"</code></td><td>TLS SNI 和证书校验名称。</td></tr>
+                <tr><td><code>tunnel_tls_insecure</code></td><td>client</td><td><code>false</code></td><td>跳过证书校验，只建议测试。</td></tr>
+                <tr><td><code>tunnel_security</code></td><td>VLESS</td><td><code>"reality"</code></td><td>额外安全层；普通 TLS 不写这里。</td></tr>
+                <tr><td><code>tunnel_flow</code></td><td>VLESS</td><td><code>"xtls-rprx-vision"</code></td><td>VLESS flow。</td></tr>
+                <tr><td><code>tunnel_mux</code></td><td>native</td><td><code>true</code></td><td>项目内 tunnel 多路复用。</td></tr>
+                <tr><td><code>upstream_protocol</code></td><td>client/local</td><td><code>"socks5"</code></td><td>走上游时使用 <code>socks5</code> 或 <code>mixed</code>。</td></tr>
+                <tr><td><code>socks5_username</code></td><td>client/local</td><td><code>"alice"</code></td><td>本地 SOCKS5 入口用户名。</td></tr>
+                <tr><td><code>socks5_password</code></td><td>client/local</td><td><code>"secret"</code></td><td>本地 SOCKS5 入口密码。</td></tr>
+                <tr><td><code>upstream_socks5_username</code></td><td>local</td><td><code>"gw-user"</code></td><td>连接上游 SOCKS5 网关的用户名。</td></tr>
+                <tr><td><code>upstream_socks5_password</code></td><td>local</td><td><code>"gw-pass"</code></td><td>连接上游 SOCKS5 网关的密码。</td></tr>
+                <tr><td><code>direct_probe_timeout</code></td><td>client/local</td><td><code>"500ms"</code></td><td>直连探测等待首字节的时间。</td></tr>
+                <tr><td><code>scan_retry_interval</code></td><td>local</td><td><code>"5s"</code></td><td>扫描不到网关时下一轮重试等待。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>REALITY 字段</h2>
+            <table class="doc-table">
+              <thead><tr><th>字段 / flag</th><th>端</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>reality_server_name</code> / <code>--reality-server-name</code></td><td>client</td><td>客户端握手使用的 serverName。</td></tr>
+                <tr><td><code>reality_server_names</code> / <code>--reality-server-names</code></td><td>server</td><td>服务端允许的 serverName 列表。</td></tr>
+                <tr><td><code>reality_fingerprint</code> / <code>--reality-fingerprint</code></td><td>client</td><td>uTLS 指纹，例如 <code>chrome</code>。</td></tr>
+                <tr><td><code>reality_public_key</code> / <code>--reality-public-key</code></td><td>client</td><td>服务端 private key 对应的 public key。</td></tr>
+                <tr><td><code>reality_private_key</code> / <code>--reality-private-key</code></td><td>server</td><td>服务端 X25519 private key，生成器可自动生成。</td></tr>
+                <tr><td><code>reality_short_id</code> / <code>--reality-short-id</code></td><td>client</td><td>客户端 shortId，十六进制，允许为空。</td></tr>
+                <tr><td><code>reality_short_ids</code> / <code>--reality-short-ids</code></td><td>server</td><td>服务端允许的 shortId 列表。</td></tr>
+                <tr><td><code>reality_dest</code> / <code>--reality-dest</code></td><td>server</td><td>fallback destination，格式 <code>host:port</code>。</td></tr>
+                <tr><td><code>reality_spider_x</code> / <code>--reality-spider-x</code></td><td>client</td><td>兼容字段，常用 <code>/</code>。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>只通过 CLI/API 设置的参数</h2>
+            <table class="doc-table">
+              <thead><tr><th>flag</th><th>默认</th><th>适用</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>--gateway-ip</code></td><td>空</td><td>local</td><td>指定网关 IP；为空时尝试自动发现。</td></tr>
+                <tr><td><code>--gateway-port</code></td><td><code>1080</code></td><td>local</td><td>网关代理端口。</td></tr>
+                <tr><td><code>--dial-timeout</code></td><td><code>5s</code></td><td>全部</td><td>TCP 拨号超时时间。</td></tr>
+                <tr><td><code>--refresh-interval</code></td><td><code>5s</code></td><td>local</td><td>检查本机 IPv4 变化的间隔；<code>0</code> 禁用。</td></tr>
+                <tr><td><code>--scan-timeout</code></td><td><code>250ms</code></td><td>local</td><td>局域网扫描每个 IP 的探测超时。</td></tr>
+                <tr><td><code>--scan-workers</code></td><td>至少 <code>64</code></td><td>local</td><td>扫描并发 worker 数。</td></tr>
+                <tr><td><code>--buffer-size</code></td><td><code>32768</code></td><td>全部</td><td>每个方向复制缓冲区字节数；过小会提升到最低安全值。</td></tr>
+                <tr><td><code>--verbose</code></td><td><code>false</code></td><td>全部</td><td>输出调试日志；访问日志始终输出。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>config 生成器参数</h2>
+            <table class="doc-table">
+              <thead><tr><th>flag</th><th>默认</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>--target</code></td><td><code>both</code></td><td><code>both</code>、<code>server</code>、<code>client</code>。</td></tr>
+                <tr><td><code>--protocol</code></td><td><code>native</code></td><td>生成的隧道协议。</td></tr>
+                <tr><td><code>--transport</code></td><td><code>raw</code></td><td>生成的 transport。</td></tr>
+                <tr><td><code>--token</code></td><td>自动生成</td><td>认证材料；VLESS/VMess 必须是 UUID。</td></tr>
+                <tr><td><code>--out-dir</code></td><td><code>.</code></td><td>输出目录。</td></tr>
+                <tr><td><code>--server-output</code></td><td><code>server.json</code></td><td>服务端配置输出路径。</td></tr>
+                <tr><td><code>--client-output</code></td><td><code>client.json</code></td><td>客户端配置输出路径。</td></tr>
+                <tr><td><code>--route-output</code></td><td><code>route.json</code></td><td>路由配置输出路径。</td></tr>
+                <tr><td><code>--output</code> / <code>-o</code></td><td>空</td><td>target 为 server/client 时的单文件输出路径。</td></tr>
+                <tr><td><code>--server-listen</code></td><td><code>0.0.0.0:9443</code></td><td>写入服务端 <code>listen_addrs</code>。</td></tr>
+                <tr><td><code>--client-listen</code></td><td><code>127.0.0.1:1080</code></td><td>写入客户端 <code>listen_addrs</code>。</td></tr>
+                <tr><td><code>--server-addr</code></td><td><code>127.0.0.1:9443</code></td><td>写入客户端 <code>server_addr</code>。</td></tr>
+                <tr><td><code>--tunnel-path</code></td><td><code>/proxy</code></td><td>写入 <code>tunnel_path</code>。</td></tr>
+                <tr><td><code>--mux</code></td><td>空，保留默认</td><td>写入 <code>tunnel_mux</code>，接受 <code>true</code>/<code>false</code>。</td></tr>
+                <tr><td><code>--force-ip-cidrs</code></td><td>空</td><td>写入 route.json 的 <code>force_upstream.ip_cidrs</code>。</td></tr>
+                <tr><td><code>--overwrite</code></td><td><code>false</code></td><td>允许覆盖已有输出文件。</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="doc-section">
+            <h2>常见排错速查</h2>
+            <ul>
+              <li>启动后没有读到配置：检查当前子命令默认文件名，server 默认 <code>server.json</code>，client 默认 <code>client.json</code>，local/root 默认 <code>config.json</code>。</li>
+              <li>VLESS/VMess 生成失败：确认 <code>--token</code> 是 UUID，或留空让生成器自动生成。</li>
+              <li>WebSocket 连接失败：确认 nginx 路径和 <code>tunnel_path</code> 完全一致，且 Upgrade 头已转发。</li>
+              <li>TLS 失败：确认客户端 <code>tunnel_tls_server_name</code> 与证书域名匹配；测试环境才使用 <code>tls_insecure</code>。</li>
+              <li>REALITY 失败：确认 public key 由同一个 private key 派生，serverName、shortId、flow、UUID 都匹配。</li>
+              <li>local 找不到网关：先显式传 <code>--gateway-ip</code> 和 <code>--gateway-port</code>；再调大 <code>--scan-timeout</code> 检查。</li>
+            </ul>
+            <div class="doc-next"><a class="button primary" href="./">回到教程首页</a><a class="button secondary" href="../#generator">打开网页配置生成器</a></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>tcptun</span><a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a></footer>
+  </body>
+</html>

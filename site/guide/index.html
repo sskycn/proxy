@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>tcptun 使用教程 - 从安装到所有配置</title>
+    <meta name="description" content="tcptun 中文多页教程，覆盖安装、配置生成、local、client/server、协议、transport、TLS、REALITY、路由和参数参考。">
+    <link rel="canonical" href="https://tcptun.com/guide/">
+    <meta name="theme-color" content="#101820">
+    <link rel="icon" href="../icon.svg?v=20260701-2" type="image/svg+xml">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="tcptun home">
+        <img class="brand-icon" src="../icon.svg?v=20260701-2" alt="" aria-hidden="true">
+        <span>tcptun</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="./">教程首页</a>
+        <a href="config.html">配置生成</a>
+        <a href="client-server.html">client/server</a>
+        <a href="routes.html">路由</a>
+        <a href="reference.html">参数参考</a>
+        <a href="https://github.com/sskycn/tcptun">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="doc-main">
+      <section class="doc-hero">
+        <div>
+          <p class="eyebrow">中文使用教程</p>
+          <h1>把 tcptun 从下载安装到生产配置，一步一步跑起来。</h1>
+          <p class="lede">这套教程按真实配置方式拆成多个页面：先生成配置，再选择 local 或 client/server 运行模式，然后按协议、transport、TLS/REALITY、路由规则逐项补齐。</p>
+        </div>
+        <div class="doc-card">
+          <h3>建议阅读顺序</h3>
+          <ol>
+            <li>先读本页，确认你要的部署形态。</li>
+            <li>用配置生成器得到可运行 JSON。</li>
+            <li>按协议和 transport 页面调整细节。</li>
+            <li>最后用路由和参数参考做精细化配置。</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="doc-shell">
+        <aside class="doc-sidebar" aria-label="教程导航">
+          <a class="active" href="./">教程首页</a>
+          <a href="config.html">配置生成与文件</a>
+          <a href="local.html">local 网关模式</a>
+          <a href="client-server.html">client/server 模式</a>
+          <a href="protocols.html">协议配置</a>
+          <a href="transports.html">transport、TLS、REALITY</a>
+          <a href="routes.html">路由规则</a>
+          <a href="reference.html">参数参考</a>
+        </aside>
+
+        <div class="doc-content">
+          <section class="doc-section">
+            <h2>先选你的使用方式</h2>
+            <div class="doc-grid">
+              <article class="doc-card">
+                <h3>local 模式：把局域网网关当上游</h3>
+                <p>适合你的电脑和已有代理网关在同一个局域网里，例如路由器、旁路网关或另一台机器已经开了 SOCKS5/mixed 端口。tcptun 在本机开 mixed 代理，然后自动发现或扫描网关。</p>
+                <pre><code>tcptun local \
+  --listen 127.0.0.1:1080 \
+  --gateway-port 7890</code></pre>
+                <p>关键参数是 <code>--gateway-ip</code>、<code>--gateway-port</code>、<code>--upstream-protocol</code>、<code>--route-config</code>。</p>
+              </article>
+              <article class="doc-card">
+                <h3>client/server 模式：自己搭一条隧道</h3>
+                <p>适合你有一台 VPS 或远端服务器。server 在远端监听，client 在本机开 mixed 代理，浏览器或 CLI 请求进入本地端口后通过隧道到远端出站。</p>
+                <pre><code>tcptun server --config server.json
+tcptun client --config client.json</code></pre>
+                <p>关键参数是 <code>server_addr</code>、<code>token</code>、<code>tunnel_protocol</code>、<code>tunnel_transport</code>、TLS 或 REALITY 字段。</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="doc-section">
+            <h2>从零开始的最短路径</h2>
+            <h3>1. 下载或构建</h3>
+            <p>可以从 GitHub Releases 下载预编译包，也可以在源码目录构建。构建需要 Go 1.25 或更新版本。</p>
+            <pre><code>make build
+bin/tcptun version</code></pre>
+
+            <h3>2. 生成配置</h3>
+            <p>第一次部署建议使用 <code>tcptun config</code>，它会写出 <code>server.json</code>、<code>client.json</code> 和 <code>route.json</code>。如果不带参数，会进入交互向导；带参数时直接生成，适合脚本化。</p>
+            <pre><code>tcptun config \
+  --protocol native \
+  --transport raw \
+  --server-addr proxy.example.com:9443 \
+  --server-listen 0.0.0.0:9443 \
+  --client-listen 127.0.0.1:1080</code></pre>
+
+            <h3>3. 把 server.json 放到服务器</h3>
+            <p>远端服务器只需要 <code>tcptun</code> 二进制和 <code>server.json</code>。服务端默认会读取当前模式对应的 <code>server.json</code>，也可以显式指定路径。</p>
+            <pre><code>tcptun server --config /etc/tcptun/server.json</code></pre>
+
+            <h3>4. 本机启动 client</h3>
+            <p>本机保留 <code>client.json</code> 和 <code>route.json</code>，然后启动本地 mixed 代理端口。</p>
+            <pre><code>tcptun client \
+  --config ./client.json \
+  --route-config ./route.json</code></pre>
+
+            <h3>5. 测试代理</h3>
+            <p>SOCKS5 建议使用 <code>socks5h</code>，让域名解析也经过代理路径。</p>
+            <pre><code>curl -x socks5h://127.0.0.1:1080 https://ifconfig.me
+curl -x http://127.0.0.1:1080 https://example.com</code></pre>
+          </section>
+
+          <section class="doc-section">
+            <h2>教程页面地图</h2>
+            <div class="doc-grid three">
+              <article class="doc-card">
+                <h3>配置生成</h3>
+                <p>解释 <code>tcptun config</code> 每个参数、输出文件、交互模式、覆盖写入、target 选择。</p>
+                <a class="button secondary" href="config.html">进入页面</a>
+              </article>
+              <article class="doc-card">
+                <h3>local 模式</h3>
+                <p>讲清网关发现、扫描、上游协议、本地 SOCKS5 认证、网关 SOCKS5 认证。</p>
+                <a class="button secondary" href="local.html">进入页面</a>
+              </article>
+              <article class="doc-card">
+                <h3>client/server</h3>
+                <p>从 VPS 部署、systemd、端口、防火墙到本机代理使用，给出完整例子。</p>
+                <a class="button secondary" href="client-server.html">进入页面</a>
+              </article>
+              <article class="doc-card">
+                <h3>协议配置</h3>
+                <p>native、VLESS、VMess、Trojan 每种协议的 token 规则、命令和 JSON 示例。</p>
+                <a class="button secondary" href="protocols.html">进入页面</a>
+              </article>
+              <article class="doc-card">
+                <h3>transport 与安全层</h3>
+                <p>raw、ws、h2、h3、TLS、REALITY/Vision、nginx 反代的配置细节。</p>
+                <a class="button secondary" href="transports.html">进入页面</a>
+              </article>
+              <article class="doc-card">
+                <h3>路由与参数参考</h3>
+                <p>force_upstream 规则、直连学习、所有 CLI/JSON 字段和常见排错。</p>
+                <a class="button secondary" href="routes.html">路由</a>
+                <a class="button secondary" href="reference.html">参数</a>
+              </article>
+            </div>
+          </section>
+
+          <section class="doc-section">
+            <h2>默认值速记</h2>
+            <table class="doc-table">
+              <thead>
+                <tr><th>项目</th><th>默认值</th><th>说明</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>本地监听</td><td><code>127.0.0.1:1080</code></td><td>client/local 默认开在本机，只给本机应用使用。</td></tr>
+                <tr><td>server 监听</td><td><code>0.0.0.0:9443</code></td><td>server 模式未指定监听时使用。</td></tr>
+                <tr><td>协议</td><td><code>native</code></td><td>功能最完整，支持 tunnel mux。</td></tr>
+                <tr><td>transport</td><td><code>raw</code></td><td>开销最低，适合直连 TCP 端口。</td></tr>
+                <tr><td>路由文件</td><td><code>route.json</code></td><td>client/local 加载并在退出时写回学习到的直连失败目标。</td></tr>
+                <tr><td>直连探测</td><td><code>500ms</code></td><td>TCP 目标先直连，超时或失败后走上游。</td></tr>
+              </tbody>
+            </table>
+            <div class="doc-next">
+              <a class="button primary" href="config.html">下一步：配置生成</a>
+              <a class="button secondary" href="../#generator">打开网页生成器</a>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>tcptun</span>
+      <a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a>
+    </footer>
+  </body>
+</html>

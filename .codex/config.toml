@@ -5,4 +5,6 @@ sandbox_mode = "workspace-write"
 network_access = true
 
 writable_roots = [
+    "/Users/sam/Library/Caches/go-build",
+    "/Users/sam/go"
 ]
