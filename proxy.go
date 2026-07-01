@@ -56,6 +56,7 @@ var errListenerClosedByContext = errors.New("listener closed after context cance
 
 type Config struct {
 	ListenAddr             string
+	ListenAddrs            []string
 	Mode                   string
 	ServerAddr             string
 	Token                  string
@@ -131,14 +132,58 @@ func applyModeListenDefault(cfg *config) {
 	if cfg == nil {
 		return
 	}
-	if strings.TrimSpace(cfg.ListenAddr) != "" {
-		return
-	}
 	if cfg.Mode == proxyModeServer {
+		if strings.TrimSpace(cfg.ListenAddr) != "" || len(cfg.ListenAddrs) > 0 {
+			return
+		}
 		cfg.ListenAddr = "0.0.0.0:9443"
 		return
 	}
+	if strings.TrimSpace(cfg.ListenAddr) != "" {
+		return
+	}
 	cfg.ListenAddr = defaultConfig().ListenAddr
+}
+
+func normalizedListenAddrs(listenAddr string, listenAddrs []string) []string {
+	candidates := listenAddrs
+	if len(candidates) == 0 {
+		candidates = splitCommaSeparated(listenAddr)
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	addrs := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		addrs = append(addrs, trimmed)
+	}
+	return addrs
+}
+
+func splitCommaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func serverListenAddrs(cfg config) ([]string, error) {
+	addrs := normalizedListenAddrs(cfg.ListenAddr, cfg.ListenAddrs)
+	if len(addrs) == 0 {
+		return nil, errors.New("server listen address is required")
+	}
+	return addrs, nil
 }
 
 type proxyServer struct {
@@ -300,6 +345,9 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 		return err
 	}
 	applyModeListenDefault(&cfg)
+	if cfg.Mode != proxyModeServer && len(normalizedListenAddrs("", cfg.ListenAddrs)) > 0 {
+		return errors.New("listen_addrs is only supported in server mode")
+	}
 	cfg.UpstreamProtocol, err = normalizeUpstreamProtocol(cfg.UpstreamProtocol)
 	if err != nil {
 		return err

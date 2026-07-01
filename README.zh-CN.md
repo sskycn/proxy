@@ -243,7 +243,7 @@ bin/tcptun client --server-addr proxy.example.com:9443 --transport h3 --tunnel-p
 
 `tcptun local` 会强制 local 模式：本地 mixed 代理通过发现到的网关转发，即使 `config.json` 里写了 `"mode": "client"` 或 `"mode": "server"`。
 
-`tcptun server` 会监听配置的隧道协议，并在服务端侧连接真实目标。服务端出站目标必须解析为公网 IP；私有、回环、链路本地、组播、CGNAT 和保留网段会在拨号前被拒绝。所有隧道协议都支持 TCP 和 SOCKS5 UDP relay。使用 `--listen` 指定服务端监听地址，使用 `--token` 开启认证。
+`tcptun server` 会监听配置的隧道协议，并在服务端侧连接真实目标。服务端出站目标必须解析为公网 IP；私有、回环、链路本地、组播、CGNAT 和保留网段会在拨号前被拒绝。所有隧道协议都支持 TCP 和 SOCKS5 UDP relay。使用 `--listen` 指定服务端监听地址，使用 `--token` 开启认证；如果要同时监听多个本地地址，可以使用 `--listen addr1,addr2` 或 JSON 里的 `listen_addrs`。
 
 `tcptun client` 保持本地 mixed 代理入口，但会把已解析出目标的上游流量封装到隧道服务端。使用 `--server-addr` 指定服务端地址，`--token` 需要和服务端一致。
 
@@ -370,6 +370,18 @@ bin/tcptun client --server-addr proxy.example.com:443 --transport ws --tunnel-pa
   "tunnel_security": "none",
   "tunnel_path": "/proxy",
   "tunnel_mux": true
+}
+```
+
+server 配置需要绑定多个地址时，可以用 `listen_addrs` 替代 `listen_addr`：
+
+```json
+{
+  "mode": "server",
+  "listen_addrs": ["0.0.0.0:443", "[::]:443"],
+  "token": "change-me",
+  "tunnel_protocol": "vless",
+  "tunnel_transport": "raw"
 }
 ```
 

@@ -156,7 +156,11 @@ func (c *websocketNetConn) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-func runHTTPTunnelServer(ctx context.Context, cfg config, log io.Writer) error {
+func runHTTPTunnelServer(ctx context.Context, cfg config, listenAddrs []string, log io.Writer) error {
+	return runTunnelServerOnAddrs(ctx, cfg, listenAddrs, log, runHTTPTunnelServerOnAddr)
+}
+
+func runHTTPTunnelServerOnAddr(ctx context.Context, cfg config, log io.Writer) error {
 	mux := http.NewServeMux()
 	server := &proxyServer{
 		cfg: cfg,

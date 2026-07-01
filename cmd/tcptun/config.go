@@ -30,6 +30,7 @@ const (
 type generatedRouteConfig struct {
 	Mode                   string   `json:"mode,omitempty"`
 	ListenAddr             string   `json:"listen_addr,omitempty"`
+	ListenAddrs            []string `json:"listen_addrs,omitempty"`
 	ServerAddr             string   `json:"server_addr,omitempty"`
 	Token                  string   `json:"token,omitempty"`
 	TunnelProtocol         string   `json:"tunnel_protocol,omitempty"`
@@ -724,13 +725,18 @@ func strconvBool(value bool) string {
 }
 
 func buildGeneratedConfigs(protocol string, transport string, token string, opts generateConfigOptions, mux bool, muxSet bool) (generatedRouteConfig, generatedRouteConfig) {
+	serverListenAddrs := splitCommaList(opts.serverListen)
 	serverCfg := generatedRouteConfig{
 		Mode:            tcptun.ProxyModeServer,
-		ListenAddr:      strings.TrimSpace(opts.serverListen),
 		Token:           token,
 		TunnelProtocol:  protocol,
 		TunnelTransport: transport,
 		TunnelPath:      normalizeGeneratedPath(opts.tunnelPath),
+	}
+	if len(serverListenAddrs) > 1 {
+		serverCfg.ListenAddrs = serverListenAddrs
+	} else {
+		serverCfg.ListenAddr = strings.TrimSpace(opts.serverListen)
 	}
 	clientCfg := generatedRouteConfig{
 		Mode:                   tcptun.ProxyModeClient,

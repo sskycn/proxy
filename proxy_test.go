@@ -25,6 +25,15 @@ import (
 	"time"
 )
 
+type channelLogWriter struct {
+	ch chan<- string
+}
+
+func (w channelLogWriter) Write(p []byte) (int, error) {
+	w.ch <- string(append([]byte(nil), p...))
+	return len(p), nil
+}
+
 func TestRunProxyRejectsUnknownTrafficWithoutUpstreamForward(t *testing.T) {
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -705,6 +714,40 @@ func TestApplyRuntimeConfigDefaultsLoadsModeOnlyWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestApplyRuntimeConfigDefaultsLoadsServerListenAddrs(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "server.json")
+	configBody := []byte(`{
+		"mode": "server",
+		"listen_addr": "127.0.0.1:19080",
+		"listen_addrs": ["127.0.0.1:19081", "127.0.0.1:19082"]
+	}`)
+	if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config{ConfigPath: configPath}
+	if err := applyRuntimeConfigDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenAddr != "" {
+		t.Fatalf("listen addr = %q, want empty when listen_addrs is set", cfg.ListenAddr)
+	}
+	if got, want := strings.Join(cfg.ListenAddrs, ","), "127.0.0.1:19081,127.0.0.1:19082"; got != want {
+		t.Fatalf("listen addrs = %q, want %q", got, want)
+	}
+
+	cfg = config{ConfigPath: configPath, ListenAddr: "127.0.0.1:19100"}
+	if err := applyRuntimeConfigDefaults(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ListenAddrs) != 0 {
+		t.Fatalf("listen addrs = %#v, want command listen override", cfg.ListenAddrs)
+	}
+	if cfg.ListenAddr != "127.0.0.1:19100" {
+		t.Fatalf("listen addr = %q, want command override", cfg.ListenAddr)
+	}
+}
+
 func TestScanLocalIPv4WithRetryRetriesAfterNotFound(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.GatewayPort = 1080
@@ -793,6 +836,109 @@ func TestApplyModeListenDefault(t *testing.T) {
 	if cfg.ListenAddr != "127.0.0.1:19090" {
 		t.Fatalf("explicit listen addr = %q", cfg.ListenAddr)
 	}
+
+	cfg = config{Mode: proxyModeServer, ListenAddrs: []string{"127.0.0.1:19091"}}
+	applyModeListenDefault(&cfg)
+	if cfg.ListenAddr != "" {
+		t.Fatalf("listen addr = %q, want empty with listen addrs", cfg.ListenAddr)
+	}
+}
+
+func TestServerListenAddrsNormalizesList(t *testing.T) {
+	addrs, err := serverListenAddrs(config{
+		ListenAddrs: []string{" 127.0.0.1:19081 ", "", "127.0.0.1:19081", "[::1]:19082"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(addrs, ","), "127.0.0.1:19081,[::1]:19082"; got != want {
+		t.Fatalf("listen addrs = %q, want %q", got, want)
+	}
+
+	addrs, err = serverListenAddrs(config{ListenAddr: "127.0.0.1:19081, [::1]:19082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(addrs, ","), "127.0.0.1:19081,[::1]:19082"; got != want {
+		t.Fatalf("comma listen addrs = %q, want %q", got, want)
+	}
+}
+
+func TestRunProxyServerListensOnMultipleRawAddresses(t *testing.T) {
+	listenAddrs := []string{reserveTCPAddr(t), reserveTCPAddr(t)}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runProxy(ctx, config{
+			Mode:            proxyModeServer,
+			ListenAddrs:     listenAddrs,
+			Token:           "secret",
+			TunnelTransport: tunnelTransportRaw,
+			DialTimeout:     time.Second,
+			BufferSize:      4096,
+		}, io.Discard)
+	}()
+	for _, listenAddr := range listenAddrs {
+		waitForTCP(t, listenAddr)
+		conn, err := net.DialTimeout("tcp", listenAddr, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stopProxy(t, cancel, errCh)
+}
+
+func TestRunProxyServerKeepsRunningWhenOneListenAddrFails(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := occupied.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close occupied listener: %v", err)
+		}
+	})
+
+	goodAddr := reserveTCPAddr(t)
+	listenAddrs := []string{occupied.Addr().String(), goodAddr}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	logCh := make(chan string, 8)
+	go func() {
+		errCh <- runProxy(ctx, config{
+			Mode:            proxyModeServer,
+			ListenAddrs:     listenAddrs,
+			Token:           "secret",
+			TunnelTransport: tunnelTransportRaw,
+			DialTimeout:     time.Second,
+			BufferSize:      4096,
+		}, channelLogWriter{ch: logCh})
+	}()
+	waitForTCP(t, goodAddr)
+
+	conn, err := net.DialTimeout("tcp", goodAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	wantLog := "tunnel server listener " + occupied.Addr().String() + " stopped"
+	deadline := time.After(time.Second)
+	var logs strings.Builder
+	for !strings.Contains(logs.String(), wantLog) {
+		select {
+		case line := <-logCh:
+			logs.WriteString(line)
+		case <-deadline:
+			t.Fatalf("log = %q, want %q", logs.String(), wantLog)
+		}
+	}
+	stopProxy(t, cancel, errCh)
 }
 
 func TestResolveConfigPathSearchOrder(t *testing.T) {

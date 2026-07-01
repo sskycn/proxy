@@ -243,7 +243,7 @@ Running `tcptun` without a subcommand defaults to local mode. If `config.json` c
 
 `tcptun local` forces local mode: the local mixed proxy listener forwards through the discovered gateway, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
 
-`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. Server-side outbound targets must resolve to public IP addresses; private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing. TCP and SOCKS5 UDP relay are supported by every tunnel protocol.
+`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. Server-side outbound targets must resolve to public IP addresses; private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing. TCP and SOCKS5 UDP relay are supported by every tunnel protocol. Use `--listen addr1,addr2` or JSON `listen_addrs` to bind one server to multiple local addresses.
 
 `tcptun client` keeps the local mixed proxy listener, but upstream traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
 
@@ -370,6 +370,18 @@ Runtime config example:
   "tunnel_security": "none",
   "tunnel_path": "/proxy",
   "tunnel_mux": true
+}
+```
+
+Server configs may use `listen_addrs` instead of `listen_addr` when the same server should bind multiple addresses:
+
+```json
+{
+  "mode": "server",
+  "listen_addrs": ["0.0.0.0:443", "[::]:443"],
+  "token": "change-me",
+  "tunnel_protocol": "vless",
+  "tunnel_transport": "raw"
 }
 ```
 

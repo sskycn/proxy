@@ -77,6 +77,7 @@ These fields are loaded from `config.json`, `server.json`, or `client.json`.
 | --- | --- | --- |
 | `mode` | server/client/local | Runtime mode. `server` accepts tunnel connections, `client` opens the local mixed proxy listener and forwards through a tunnel server, and `local` discovers a gateway proxy. |
 | `listen_addr` | server/client/local | Local listen address. Servers commonly use `0.0.0.0:9443`; clients commonly use `127.0.0.1:1080`. |
+| `listen_addrs` | server | Multiple local listen addresses for one server process, for example `["0.0.0.0:443", "[::]:443"]`. When set, it takes precedence over `listen_addr` from the same config file. |
 | `server_addr` | client | Tunnel server address in `host:port` form. |
 | `token` | server/client | Authentication material. For `native` it is a shared token, for VLESS/VMess it is a UUID, and for Trojan it is the password. |
 | `tunnel_protocol` | server/client | Tunnel protocol: `native`, `vless`, `vmess`, or `trojan`. |

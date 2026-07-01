@@ -57,14 +57,72 @@ type nativeUDPUpstream struct {
 }
 
 func runTunnelServer(ctx context.Context, cfg config, log io.Writer) error {
+	listenAddrs, err := serverListenAddrs(cfg)
+	if err != nil {
+		return err
+	}
 	switch cfg.TunnelTransport {
 	case tunnelTransportRaw:
-		return runRawTunnelServer(ctx, cfg, log)
+		return runTunnelServerOnAddrs(ctx, cfg, listenAddrs, log, runRawTunnelServer)
 	case tunnelTransportWS, tunnelTransportH2, tunnelTransportH3:
-		return runHTTPTunnelServer(ctx, cfg, log)
+		return runHTTPTunnelServer(ctx, cfg, listenAddrs, log)
 	default:
 		return fmt.Errorf("unsupported tunnel transport %q", cfg.TunnelTransport)
 	}
+}
+
+func runTunnelServerOnAddrs(ctx context.Context, cfg config, listenAddrs []string, log io.Writer, run func(context.Context, config, io.Writer) error) error {
+	if len(listenAddrs) == 0 {
+		return errors.New("server listen address is required")
+	}
+	if len(listenAddrs) == 1 {
+		cfg.ListenAddr = listenAddrs[0]
+		return run(ctx, cfg, log)
+	}
+
+	type listenResult struct {
+		addr string
+		err  error
+	}
+
+	errCh := make(chan listenResult, len(listenAddrs))
+	var wg sync.WaitGroup
+	for _, listenAddr := range listenAddrs {
+		cfg := cfg
+		cfg.ListenAddr = listenAddr
+		addr := listenAddr
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- listenResult{addr: addr, err: run(ctx, cfg, log)}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	var retErr error
+	for result := range errCh {
+		if result.err == nil {
+			continue
+		}
+		if ctx.Err() != nil {
+			if logErr := logf(log, "tunnel server listener %s stopped after context cancellation: %v\n", result.addr, result.err); logErr != nil {
+				retErr = errors.Join(retErr, logErr)
+			}
+			continue
+		}
+		err := fmt.Errorf("tunnel server listener %s stopped: %w", result.addr, result.err)
+		retErr = errors.Join(retErr, err)
+		if logErr := logf(log, "%v\n", err); logErr != nil {
+			retErr = errors.Join(retErr, logErr)
+		}
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	return retErr
 }
 
 func runRawTunnelServer(ctx context.Context, cfg config, log io.Writer) error {
