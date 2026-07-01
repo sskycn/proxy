@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>tcptun - High-performance TCP tunnel and mixed proxy</title>
+    <meta name="description" content="tcptun is a high-performance Go TCP tunnel and mixed proxy for native, VLESS, VMess, Trojan, and REALITY/Vision client-server deployments.">
+    <link rel="canonical" href="https://tcptun.com/">
+    <meta property="og:title" content="tcptun">
+    <meta property="og:description" content="A high-performance Go TCP tunnel and mixed proxy with native, VLESS, VMess, Trojan, and REALITY/Vision support.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://tcptun.com/">
+    <meta name="theme-color" content="#111827">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="tcptun home">
+        <span class="brand-mark">t</span>
+        <span>tcptun</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#deploy">Deploy</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/sskycn/tcptun">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Go TCP tunnel and mixed proxy</p>
+          <h1>Fast client-server tunneling for modern proxy deployments.</h1>
+          <p class="lede">
+            tcptun carries SOCKS5, HTTP CONNECT, and tunnel traffic through native,
+            VLESS, VMess, Trojan, and REALITY/Vision modes with low overhead and
+            production-friendly configuration.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/sskycn/tcptun/releases/latest">Download latest</a>
+            <a class="button secondary" href="https://github.com/sskycn/tcptun">View source</a>
+          </div>
+        </div>
+        <div class="terminal" aria-label="tcptun command preview">
+          <div class="terminal-bar">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <pre><code>$ tcptun server \
+  --listen 0.0.0.0:443 \
+  --tunnel-protocol vless \
+  --transport raw \
+  --tunnel-security reality \
+  --flow xtls-rprx-vision
+
+$ tcptun client \
+  --listen 127.0.0.1:1080 \
+  --server-addr proxy.example.com:443</code></pre>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">Capabilities</p>
+          <h2>One binary, several deployment shapes.</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>Mixed local proxy</h3>
+            <p>Accepts SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP proxy, and HTTP CONNECT traffic from one local listener.</p>
+          </article>
+          <article>
+            <h3>Multiple tunnel protocols</h3>
+            <p>Use the native protocol for full coverage, or VLESS, VMess, and Trojan for compatible TCP tunneling.</p>
+          </article>
+          <article>
+            <h3>REALITY/Vision support</h3>
+            <p>Run VLESS over raw transport with REALITY/Vision for deployments that need realistic TLS behavior.</p>
+          </article>
+          <article>
+            <h3>Efficient transports</h3>
+            <p>Carry tunnels over raw TCP, WebSocket, HTTP/2, or HTTP/3, with multiplexing in native mode.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="deploy" class="section split">
+        <div>
+          <p class="eyebrow">Deploy</p>
+          <h2>Start with generated config files.</h2>
+          <p>
+            Generate ready-to-edit server, client, and route configuration files,
+            then run the matching server and local client commands.
+          </p>
+        </div>
+        <div class="code-card">
+          <pre><code>tcptun config --protocol vless \
+  --server-addr proxy.example.com:443
+
+tcptun server --config server.json
+tcptun client --config client.json</code></pre>
+        </div>
+      </section>
+
+      <section id="download" class="section download">
+        <div>
+          <p class="eyebrow">Download</p>
+          <h2>Prebuilt binaries for common platforms.</h2>
+          <p>Release packages include the binary, English and Chinese README files, docs, and SHA-256 checksum files.</p>
+        </div>
+        <a class="button primary" href="https://github.com/sskycn/tcptun/releases/latest">Open releases</a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>tcptun</span>
+      <a href="https://github.com/sskycn/tcptun">github.com/sskycn/tcptun</a>
+    </footer>
+  </body>
+</html>
