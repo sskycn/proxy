@@ -17,7 +17,10 @@ import (
 
 const (
 	protocolCmdTCP = byte(0x01)
-	protocolCmdUDP = byte(0x03)
+	protocolCmdUDP = byte(0x02)
+	protocolCmdMux = byte(0x03)
+
+	trojanCmdUDP = byte(0x03)
 
 	vlessVersion      = byte(0x00)
 	vlessAtypIPv4     = byte(0x01)
@@ -53,6 +56,8 @@ func (s *proxyServer) handleProtocolTunnelConn(ctx context.Context, conn net.Con
 		return s.handleProtocolTunnelTCP(ctx, conn, reader, req)
 	case protocolCmdUDP:
 		return s.handleProtocolTunnelUDP(ctx, conn, reader, req)
+	case protocolCmdMux:
+		return s.handleProtocolTunnelMux(ctx, conn, reader, req)
 	default:
 		return errProtocolUnsupported
 	}
@@ -324,21 +329,35 @@ func readVLESSRequest(reader io.Reader, expectedToken string) (protocolTunnelReq
 			return protocolTunnelRequest{}, flowErr
 		}
 	}
-	tail := make([]byte, 4)
+	cmdBuf := make([]byte, 1)
+	if _, err := io.ReadFull(reader, cmdBuf); err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	cmd := cmdBuf[0]
+	switch cmd {
+	case protocolCmdTCP, protocolCmdUDP:
+	case protocolCmdMux:
+		return protocolTunnelRequest{
+			cmd:  cmd,
+			host: "v1.mux.cool",
+			port: 666,
+			flow: flow,
+		}, nil
+	default:
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	tail := make([]byte, 3)
 	if _, err := io.ReadFull(reader, tail); err != nil {
 		return protocolTunnelRequest{}, err
 	}
-	if tail[0] != protocolCmdTCP && tail[0] != protocolCmdUDP {
-		return protocolTunnelRequest{}, errProtocolUnsupported
-	}
-	host, err := readVLESSAddress(reader, tail[3])
+	host, err := readVLESSAddress(reader, tail[2])
 	if err != nil {
 		return protocolTunnelRequest{}, err
 	}
 	return protocolTunnelRequest{
-		cmd:  tail[0],
+		cmd:  cmd,
 		host: host,
-		port: binary.BigEndian.Uint16(tail[1:3]),
+		port: binary.BigEndian.Uint16(tail[0:2]),
 		flow: flow,
 	}, nil
 }
@@ -503,7 +522,7 @@ func readTrojanRequest(reader *bufio.Reader, expectedPassword string) (protocolT
 	if err != nil {
 		return protocolTunnelRequest{}, err
 	}
-	if cmd != protocolCmdTCP && cmd != protocolCmdUDP {
+	if cmd != protocolCmdTCP && cmd != trojanCmdUDP {
 		return protocolTunnelRequest{}, errProtocolUnsupported
 	}
 	host, port, err := readSocksAddress(reader)
@@ -516,6 +535,9 @@ func readTrojanRequest(reader *bufio.Reader, expectedPassword string) (protocolT
 	}
 	if crlf[0] != '\r' || crlf[1] != '\n' {
 		return protocolTunnelRequest{}, errProtocolUnauthorized
+	}
+	if cmd == trojanCmdUDP {
+		cmd = protocolCmdUDP
 	}
 	return protocolTunnelRequest{cmd: cmd, host: host, port: port}, nil
 }

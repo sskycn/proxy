@@ -52,6 +52,19 @@ func TestVMessAEADRequestAndResponse(t *testing.T) {
 }
 
 func TestProtocolUDPFrameCodecs(t *testing.T) {
+	token := "33333333-3333-4333-8333-333333333333"
+	var vlessRequest bytes.Buffer
+	if err := writeVLESSRequest(&vlessRequest, token, "", protocolCmdUDP, "1.1.1.1", 53); err != nil {
+		t.Fatal(err)
+	}
+	gotVLESSRequest, err := readVLESSRequest(bytes.NewReader(vlessRequest.Bytes()), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotVLESSRequest.cmd != protocolCmdUDP || gotVLESSRequest.host != "1.1.1.1" || gotVLESSRequest.port != 53 {
+		t.Fatalf("vless udp request = %#v", gotVLESSRequest)
+	}
+
 	var vlessWire bytes.Buffer
 	if err := writeLengthUDPFrame(&vlessWire, []byte("dns")); err != nil {
 		t.Fatal(err)
@@ -75,6 +88,19 @@ func TestProtocolUDPFrameCodecs(t *testing.T) {
 	}
 	if gotTrojanFrame.host != trojanFrame.host || gotTrojanFrame.port != trojanFrame.port || !bytes.Equal(gotTrojanFrame.payload, trojanFrame.payload) {
 		t.Fatalf("trojan udp frame = %#v, want %#v", gotTrojanFrame, trojanFrame)
+	}
+
+	xudpFrame := protocolUDPFrame{host: "1.1.1.1", port: 53, payload: []byte("dns")}
+	var xudpWire bytes.Buffer
+	if err := writeXUDPFrame(&xudpWire, xudpFrame); err != nil {
+		t.Fatal(err)
+	}
+	gotXUDPFrame, err := readXUDPFrame(&xudpWire, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotXUDPFrame.host != xudpFrame.host || gotXUDPFrame.port != xudpFrame.port || !bytes.Equal(gotXUDPFrame.payload, xudpFrame.payload) {
+		t.Fatalf("xudp frame = %#v, want %#v", gotXUDPFrame, xudpFrame)
 	}
 
 	iv := []byte("1234567890abcdef")

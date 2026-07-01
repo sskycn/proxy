@@ -2,6 +2,7 @@ package tcptun
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -13,6 +14,14 @@ import (
 )
 
 const trojanMaxUDPPayload = 8192
+
+const (
+	xudpCmdNew     = byte(0x01)
+	xudpCmdKeep    = byte(0x02)
+	xudpCmdDiscard = byte(0x04)
+	xudpOptData    = byte(0x01)
+	xudpNetworkUDP = byte(0x02)
+)
 
 type protocolUDPFrame struct {
 	host    string
@@ -60,6 +69,120 @@ func (s *proxyServer) handleProtocolTunnelUDP(ctx context.Context, conn net.Conn
 		return err
 	}
 	return nil
+}
+
+func (s *proxyServer) handleProtocolTunnelMux(ctx context.Context, conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) error {
+	if s.cfg.TunnelProtocol != tunnelProtocolVLESS {
+		return errProtocolUnsupported
+	}
+	clientConn := conn
+	var clientReader io.Reader = reader
+	vision, err := s.prepareVLESSBodyConn(conn, reader, req)
+	if err != nil {
+		return err
+	}
+	if vision != nil {
+		clientConn = vision
+		clientReader = vision
+	}
+	udpConn, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		return err
+	}
+	defer closeUDPWithLog(udpConn, s.log, "vless xudp target")
+	if err := writeVLESSResponse(conn); err != nil {
+		return err
+	}
+
+	done := make(chan error, 2)
+	var writeMu sync.Mutex
+	go s.vlessXUDPClientToRemote(ctx, clientReader, udpConn, done)
+	go s.vlessXUDPRemoteToClient(ctx, clientConn, udpConn, &writeMu, done)
+
+	if err := <-done; err != nil && !isExpectedNetworkClose(err) && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
+}
+
+func (s *proxyServer) vlessXUDPClientToRemote(ctx context.Context, reader io.Reader, udpConn *net.UDPConn, done chan<- error) {
+	var lastHost string
+	var lastPort uint16
+	for {
+		frame, err := readXUDPFrame(reader, lastHost, lastPort)
+		if err != nil {
+			done <- err
+			return
+		}
+		lastHost = frame.host
+		lastPort = frame.port
+		if len(frame.payload) == 0 {
+			if ctx.Err() != nil {
+				done <- ctx.Err()
+				return
+			}
+			continue
+		}
+		targetText := net.JoinHostPort(frame.host, strconv.Itoa(int(frame.port)))
+		target, err := s.publicUDPTarget(ctx, frame.host, frame.port)
+		if err != nil {
+			if errors.Is(err, errServerTargetNotPublic) {
+				if s.cfg.Verbose {
+					if logErr := logf(s.log, "drop vless xudp %s: %v\n", targetText, err); logErr != nil {
+						done <- logErr
+						return
+					}
+				}
+				if ctx.Err() != nil {
+					done <- ctx.Err()
+					return
+				}
+				continue
+			}
+			done <- err
+			return
+		}
+		if _, err := udpConn.WriteToUDP(frame.payload, target); err != nil {
+			done <- err
+			return
+		}
+		if s.cfg.Verbose {
+			if err := logf(s.log, "vless xudp %s\n", targetText); err != nil {
+				done <- err
+				return
+			}
+		}
+		if ctx.Err() != nil {
+			done <- ctx.Err()
+			return
+		}
+	}
+}
+
+func (s *proxyServer) vlessXUDPRemoteToClient(ctx context.Context, conn net.Conn, udpConn *net.UDPConn, writeMu *sync.Mutex, done chan<- error) {
+	buf := make([]byte, udpBufferSize)
+	for {
+		n, addr, err := udpConn.ReadFromUDP(buf)
+		if err != nil {
+			done <- err
+			return
+		}
+		writeMu.Lock()
+		err = writeXUDPFrame(conn, protocolUDPFrame{
+			host:    addr.IP.String(),
+			port:    uint16(addr.Port),
+			payload: buf[:n],
+		})
+		writeMu.Unlock()
+		if err != nil {
+			done <- err
+			return
+		}
+		if ctx.Err() != nil {
+			done <- ctx.Err()
+			return
+		}
+	}
 }
 
 func (s *proxyServer) protocolUDPClientToRemote(ctx context.Context, reader *bufio.Reader, req protocolTunnelRequest, udpConn *net.UDPConn, done chan<- error) {
@@ -168,7 +291,7 @@ func (s *proxyServer) connectViaProtocolTunnelUDP(ctx context.Context, host stri
 			return nil, closeAfterError(conn, err)
 		}
 	case tunnelProtocolTrojan:
-		if err := writeTrojanRequest(conn, s.cfg.Token, protocolCmdUDP, host, port); err != nil {
+		if err := writeTrojanRequest(conn, s.cfg.Token, trojanCmdUDP, host, port); err != nil {
 			return nil, closeAfterError(conn, err)
 		}
 	case tunnelProtocolVMess:
@@ -382,4 +505,92 @@ func readTrojanUDPFrame(reader io.Reader) (protocolUDPFrame, error) {
 		}
 	}
 	return protocolUDPFrame{host: host, port: port, payload: payload}, nil
+}
+
+func readXUDPFrame(reader io.Reader, fallbackHost string, fallbackPort uint16) (protocolUDPFrame, error) {
+	for {
+		metaLenBuf := make([]byte, 2)
+		if _, err := io.ReadFull(reader, metaLenBuf); err != nil {
+			return protocolUDPFrame{}, err
+		}
+		metaLen := int(binary.BigEndian.Uint16(metaLenBuf))
+		if metaLen < 4 || metaLen > 512 {
+			return protocolUDPFrame{}, errTunnelInvalidLength
+		}
+		meta := make([]byte, metaLen)
+		if _, err := io.ReadFull(reader, meta); err != nil {
+			return protocolUDPFrame{}, err
+		}
+		cmd := meta[2]
+		if cmd != xudpCmdNew && cmd != xudpCmdKeep && cmd != xudpCmdDiscard {
+			return protocolUDPFrame{}, errProtocolUnsupported
+		}
+		host := fallbackHost
+		port := fallbackPort
+		if len(meta) > 4 && meta[4] == xudpNetworkUDP {
+			parsedHost, parsedPort, err := readXUDPAddress(meta[5:])
+			if err != nil {
+				return protocolUDPFrame{}, err
+			}
+			host = parsedHost
+			port = parsedPort
+		}
+		if host == "" || port == 0 {
+			return protocolUDPFrame{}, errProtocolInvalidAddress
+		}
+		if meta[3] != xudpOptData {
+			if cmd == xudpCmdDiscard {
+				continue
+			}
+			return protocolUDPFrame{}, errProtocolUnsupported
+		}
+		payload, err := readLengthUDPFrame(reader)
+		if err != nil {
+			return protocolUDPFrame{}, err
+		}
+		if cmd == xudpCmdDiscard {
+			continue
+		}
+		return protocolUDPFrame{host: host, port: port, payload: payload}, nil
+	}
+}
+
+func writeXUDPFrame(w io.Writer, frame protocolUDPFrame) error {
+	if len(frame.payload) > 0xffff {
+		return errTunnelInvalidLength
+	}
+	meta := []byte{0x00, 0x00, xudpCmdKeep, xudpOptData, xudpNetworkUDP}
+	var err error
+	meta, err = appendXUDPAddress(meta, frame.host, frame.port)
+	if err != nil {
+		return err
+	}
+	packet := make([]byte, 0, 2+len(meta)+2+len(frame.payload))
+	packet = appendUint16(packet, uint16(len(meta)))
+	packet = append(packet, meta...)
+	packet = appendUint16(packet, uint16(len(frame.payload)))
+	packet = append(packet, frame.payload...)
+	return writeAll(w, packet)
+}
+
+func appendXUDPAddress(dst []byte, host string, port uint16) ([]byte, error) {
+	dst = appendUint16(dst, port)
+	return appendVLESSAddress(dst, host)
+}
+
+func readXUDPAddress(src []byte) (string, uint16, error) {
+	if len(src) < 3 {
+		return "", 0, io.ErrUnexpectedEOF
+	}
+	port := binary.BigEndian.Uint16(src[:2])
+	reader := bytes.NewReader(src[2:])
+	atyp, err := reader.ReadByte()
+	if err != nil {
+		return "", 0, err
+	}
+	host, err := readVLESSAddress(reader, atyp)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
 }
