@@ -52,15 +52,10 @@ a {
   font-weight: 700;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
+.brand-icon {
   width: 34px;
   height: 34px;
-  border: 1px solid rgba(94, 224, 183, 0.4);
-  background: #132720;
-  color: var(--accent);
-  font-weight: 800;
+  display: block;
 }
 
 .nav {
@@ -71,6 +66,33 @@ a {
 
 .nav a:hover {
   color: var(--text);
+}
+
+.language-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.language-switch button {
+  min-width: 42px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.language-switch button.active {
+  background: var(--button);
+  color: var(--button-text);
 }
 
 .hero {
@@ -470,6 +492,10 @@ textarea {
   .nav {
     flex-wrap: wrap;
     gap: 14px;
+  }
+
+  .language-switch {
+    align-self: flex-start;
   }
 
   .hero,

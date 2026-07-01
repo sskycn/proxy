@@ -7,6 +7,257 @@
   let generatedFiles = {};
   let activeGeneratedFile = "server";
   let converterText = "";
+  let currentLanguage = "en";
+
+  const translations = {
+    en: {
+      "meta.title": "tcptun - High-performance TCP tunnel and mixed proxy",
+      "meta.description": "tcptun is a high-performance Go TCP tunnel and mixed proxy for native, VLESS, VMess, Trojan, and REALITY/Vision client-server deployments.",
+      "meta.ogDescription": "A high-performance Go TCP tunnel and mixed proxy with native, VLESS, VMess, Trojan, and REALITY/Vision support.",
+      "nav.features": "Features",
+      "nav.guide": "Guide",
+      "nav.deploy": "Deploy",
+      "nav.generator": "Generator",
+      "nav.converter": "Converter",
+      "nav.download": "Download",
+      "hero.eyebrow": "Go TCP tunnel and mixed proxy",
+      "hero.title": "Fast client-server tunneling for modern proxy deployments.",
+      "hero.lede": "tcptun carries SOCKS5, HTTP CONNECT, and tunnel traffic through native, VLESS, VMess, Trojan, and REALITY/Vision modes with low overhead and production-friendly configuration.",
+      "hero.download": "Download latest",
+      "hero.source": "View source",
+      "features.eyebrow": "Capabilities",
+      "features.title": "One binary, several deployment shapes.",
+      "features.mixedTitle": "Mixed local proxy",
+      "features.mixedBody": "Accepts SOCKS5, SOCKS5 UDP ASSOCIATE, HTTP proxy, and HTTP CONNECT traffic from one local listener.",
+      "features.protocolTitle": "Multiple tunnel protocols",
+      "features.protocolBody": "Use the native protocol for full coverage, or VLESS, VMess, and Trojan for compatible TCP tunneling.",
+      "features.realityTitle": "REALITY/Vision support",
+      "features.realityBody": "Run VLESS over raw transport with REALITY/Vision for deployments that need realistic TLS behavior.",
+      "features.transportTitle": "Efficient transports",
+      "features.transportBody": "Carry tunnels over raw TCP, WebSocket, HTTP/2, or HTTP/3, with multiplexing in native mode.",
+      "deploy.eyebrow": "Deploy",
+      "deploy.title": "Start with generated config files.",
+      "deploy.body": "Generate ready-to-edit server, client, and route configuration files, then run the matching server and local client commands.",
+      "guide.eyebrow": "Usage Guide",
+      "guide.title": "From a fresh server to a local proxy port.",
+      "guide.body": "The fastest path is to generate matching JSON files, copy the server file to your VPS, and keep the client file on your computer.",
+      "guide.step1Title": "Generate config",
+      "guide.step1Body": "Create server, client, and route files with one shared token.",
+      "guide.step2Title": "Run the server",
+      "guide.step2Body": "On public servers, tcptun only dials public destination IPs and drops private ranges.",
+      "guide.step3Title": "Run the client",
+      "guide.step3Body": "The client opens a local mixed proxy endpoint for SOCKS5, HTTP proxy, and CONNECT traffic.",
+      "guide.step4Title": "Use the proxy",
+      "guide.step4Body": "Point your browser, app, or CLI tool at the local listener.",
+      "guide.realityTitle": "REALITY/Vision",
+      "guide.realityBody": "Use VLESS over raw transport with <code>tunnel_security</code> set to <code>reality</code> and <code>flow</code> set to <code>xtls-rprx-vision</code>. The server needs a private key, allowed server names, and a fallback destination; the client needs the matching public key, server name, UUID, and short ID.",
+      "guide.nginxTitle": "Behind nginx",
+      "guide.nginxBody": "Use WebSocket transport when placing tcptun behind a standard HTTP reverse proxy. Run the server on loopback and proxy the configured tunnel path to that local port.",
+      "generator.eyebrow": "Config Generator",
+      "generator.title": "Generate ready-to-run config files.",
+      "generator.body": "Fill in the deployment details and generate matching <code>server.json</code>, <code>client.json</code>, and <code>route.json</code>. Tokens and REALITY keys are generated in your browser.",
+      "generator.protocol": "Protocol",
+      "generator.transport": "Transport",
+      "generator.security": "Security",
+      "generator.serverAddr": "Server addr",
+      "generator.serverListen": "Server listen",
+      "generator.clientListen": "Client listen",
+      "generator.path": "Tunnel path",
+      "generator.serverName": "Server name",
+      "generator.realityDest": "REALITY dest",
+      "generator.shortID": "Short ID",
+      "generator.shortIDPlaceholder": "empty is allowed",
+      "generator.forceCIDRs": "Force CIDRs",
+      "generator.generate": "Generate",
+      "generator.copy": "Copy current",
+      "generator.download": "Download current",
+      "generator.generatedFiles": "Generated files",
+      "generator.initialOutput": "Click Generate to create config files.",
+      "generator.generated": "Generated server.json, client.json, and route.json.",
+      "converter.eyebrow": "Xray / V2Ray Converter",
+      "converter.title": "Convert JSON configs in your browser.",
+      "converter.body": "Paste an Xray or V2Ray JSON config and generate a tcptun <code>client.json</code> or <code>server.json</code>. Conversion runs locally in this page; the config never leaves your browser.",
+      "converter.target": "Target",
+      "converter.targetClient": "client.json from outbound",
+      "converter.targetServer": "server.json from inbound",
+      "converter.tag": "Tag",
+      "converter.tagPlaceholder": "optional inbound/outbound tag",
+      "converter.listen": "Listen",
+      "converter.upstream": "Upstream",
+      "converter.source": "Xray / V2Ray JSON",
+      "converter.convert": "Convert",
+      "converter.sample": "Load sample",
+      "converter.output": "tcptun output",
+      "converter.copy": "Copy",
+      "converter.download": "Download",
+      "converter.initialOutput": "Paste a config and click Convert.",
+      "converter.converted": "Converted.",
+      "download.eyebrow": "Download",
+      "download.title": "Prebuilt binaries for common platforms.",
+      "download.body": "Release packages include the binary, English and Chinese README files, docs, and SHA-256 checksum files.",
+      "download.open": "Open releases",
+      "status.copied": "Copied.",
+    },
+    zh: {
+      "meta.title": "tcptun - 高性能 TCP 隧道和 mixed 代理",
+      "meta.description": "tcptun 是一个高性能 Go TCP 隧道和 mixed 代理，支持 native、VLESS、VMess、Trojan、REALITY/Vision client-server 部署。",
+      "meta.ogDescription": "高性能 Go TCP 隧道和 mixed 代理，支持 native、VLESS、VMess、Trojan 和 REALITY/Vision。",
+      "nav.features": "功能",
+      "nav.guide": "教程",
+      "nav.deploy": "部署",
+      "nav.generator": "生成配置",
+      "nav.converter": "配置转换",
+      "nav.download": "下载",
+      "hero.eyebrow": "Go TCP 隧道和 mixed 代理",
+      "hero.title": "面向现代代理部署的高速 client-server 隧道。",
+      "hero.lede": "tcptun 以低开销承载 SOCKS5、HTTP CONNECT 和隧道流量，支持 native、VLESS、VMess、Trojan、REALITY/Vision，并提供适合生产环境的配置方式。",
+      "hero.download": "下载最新版",
+      "hero.source": "查看源码",
+      "features.eyebrow": "能力",
+      "features.title": "一个二进制，覆盖多种部署形态。",
+      "features.mixedTitle": "本地 mixed 代理",
+      "features.mixedBody": "一个本地监听端口同时接收 SOCKS5、SOCKS5 UDP ASSOCIATE、HTTP 代理和 HTTP CONNECT 流量。",
+      "features.protocolTitle": "多种隧道协议",
+      "features.protocolBody": "默认 native 协议覆盖能力最完整，也可以使用 VLESS、VMess、Trojan 承载兼容 TCP 隧道。",
+      "features.realityTitle": "REALITY/Vision 支持",
+      "features.realityBody": "使用 VLESS over raw transport 搭配 REALITY/Vision，适合需要真实 TLS 行为的部署。",
+      "features.transportTitle": "高效承载层",
+      "features.transportBody": "隧道可运行在 raw TCP、WebSocket、HTTP/2 或 HTTP/3 上，native 模式支持多路复用。",
+      "deploy.eyebrow": "部署",
+      "deploy.title": "从生成配置文件开始。",
+      "deploy.body": "生成可直接编辑的 server、client 和 route 配置文件，然后分别运行匹配的服务端和本地客户端命令。",
+      "guide.eyebrow": "使用教程",
+      "guide.title": "从一台新服务器到本地代理端口。",
+      "guide.body": "最快路径是生成匹配的 JSON 配置，把 server 文件复制到 VPS，把 client 文件留在你的电脑上。",
+      "guide.step1Title": "生成配置",
+      "guide.step1Body": "创建共享同一个 token 的 server、client 和 route 文件。",
+      "guide.step2Title": "启动服务端",
+      "guide.step2Body": "在公网服务器上，tcptun 只会拨号公网目标 IP，并直接丢弃私有网段。",
+      "guide.step3Title": "启动客户端",
+      "guide.step3Body": "客户端会打开一个本地 mixed 代理入口，支持 SOCKS5、HTTP 代理和 CONNECT 流量。",
+      "guide.step4Title": "使用代理",
+      "guide.step4Body": "把浏览器、应用或 CLI 工具指向本地监听地址。",
+      "guide.realityTitle": "REALITY/Vision",
+      "guide.realityBody": "使用 VLESS over raw transport，并将 <code>tunnel_security</code> 设为 <code>reality</code>、<code>flow</code> 设为 <code>xtls-rprx-vision</code>。服务端需要 private key、允许的 server names 和 fallback destination；客户端需要匹配的 public key、server name、UUID 和 short ID。",
+      "guide.nginxTitle": "放在 nginx 后面",
+      "guide.nginxBody": "放在标准 HTTP 反向代理后面时使用 WebSocket transport。服务端监听本机回环地址，nginx 将配置的 tunnel path 转发到这个本地端口。",
+      "generator.eyebrow": "配置生成器",
+      "generator.title": "生成可直接运行的配置文件。",
+      "generator.body": "填写部署信息后生成匹配的 <code>server.json</code>、<code>client.json</code> 和 <code>route.json</code>。token 和 REALITY 密钥都在你的浏览器本地生成。",
+      "generator.protocol": "协议",
+      "generator.transport": "承载层",
+      "generator.security": "安全层",
+      "generator.serverAddr": "服务端地址",
+      "generator.serverListen": "服务端监听",
+      "generator.clientListen": "客户端监听",
+      "generator.path": "隧道路由",
+      "generator.serverName": "Server name",
+      "generator.realityDest": "REALITY 目标",
+      "generator.shortID": "Short ID",
+      "generator.shortIDPlaceholder": "允许留空",
+      "generator.forceCIDRs": "强制上游 CIDR",
+      "generator.generate": "生成",
+      "generator.copy": "复制当前",
+      "generator.download": "下载当前",
+      "generator.generatedFiles": "已生成文件",
+      "generator.initialOutput": "点击生成配置文件。",
+      "generator.generated": "已生成 server.json、client.json 和 route.json。",
+      "converter.eyebrow": "Xray / V2Ray 转换器",
+      "converter.title": "在浏览器里转换 JSON 配置。",
+      "converter.body": "粘贴 Xray 或 V2Ray JSON 配置，生成 tcptun 的 <code>client.json</code> 或 <code>server.json</code>。转换完全在当前页面本地完成，配置不会离开你的浏览器。",
+      "converter.target": "目标",
+      "converter.targetClient": "从 outbound 生成 client.json",
+      "converter.targetServer": "从 inbound 生成 server.json",
+      "converter.tag": "Tag",
+      "converter.tagPlaceholder": "可选 inbound/outbound tag",
+      "converter.listen": "监听",
+      "converter.upstream": "上游",
+      "converter.source": "Xray / V2Ray JSON",
+      "converter.convert": "转换",
+      "converter.sample": "加载样例",
+      "converter.output": "tcptun 输出",
+      "converter.copy": "复制",
+      "converter.download": "下载",
+      "converter.initialOutput": "粘贴配置后点击转换。",
+      "converter.converted": "已转换。",
+      "download.eyebrow": "下载",
+      "download.title": "常见平台的预编译二进制。",
+      "download.body": "发布包包含二进制文件、中英文 README、文档和 SHA-256 校验文件。",
+      "download.open": "打开 releases",
+      "status.copied": "已复制。",
+    },
+  };
+
+  function t(key) {
+    return (translations[currentLanguage] && translations[currentLanguage][key]) || translations.en[key] || key;
+  }
+
+  function normalizeLanguage(value) {
+    return String(value || "").toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+
+  function initialLanguage() {
+    try {
+      const saved = localStorage.getItem("tcptun_language");
+      if (saved === "en" || saved === "zh") return saved;
+    } catch (error) {
+      // Ignore storage access errors in private or restricted browsing modes.
+    }
+    const languages = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    return normalizeLanguage(languages[0]);
+  }
+
+  function applyTranslations() {
+    document.documentElement.lang = currentLanguage === "zh" ? "zh-CN" : "en";
+    document.querySelectorAll("[data-i18n]").forEach((element) => {
+      element.innerHTML = t(element.dataset.i18n);
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => {
+      element.setAttribute("placeholder", t(element.dataset.i18nPlaceholder));
+    });
+    document.querySelectorAll("[data-i18n-content]").forEach((element) => {
+      element.setAttribute("content", t(element.dataset.i18nContent));
+    });
+    document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => {
+      element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
+    });
+    document.title = t("meta.title");
+    document.querySelectorAll("[data-lang-option]").forEach((button) => {
+      const active = button.dataset.langOption === currentLanguage;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    refreshEmptyOutputs();
+  }
+
+  function setLanguage(language) {
+    currentLanguage = language === "zh" ? "zh" : "en";
+    try {
+      localStorage.setItem("tcptun_language", currentLanguage);
+    } catch (error) {
+      // Ignore storage access errors.
+    }
+    applyTranslations();
+  }
+
+  function initI18n() {
+    currentLanguage = initialLanguage();
+    document.querySelectorAll("[data-lang-option]").forEach((button) => {
+      button.addEventListener("click", () => setLanguage(button.dataset.langOption));
+    });
+    applyTranslations();
+  }
+
+  function refreshEmptyOutputs() {
+    const generatorOutput = document.getElementById("generator-output");
+    if (generatorOutput && !generatedFiles[activeGeneratedFile]) {
+      setCode(generatorOutput, t("generator.initialOutput"));
+    }
+    const converterOutput = document.getElementById("converter-output");
+    if (converterOutput && !converterText) {
+      setCode(converterOutput, t("converter.initialOutput"));
+    }
+  }
 
   function normalizePath(value) {
     const trimmed = String(value || "").trim();
@@ -432,7 +683,7 @@
   async function copyText(text, statusElement) {
     if (!text) return;
     await navigator.clipboard.writeText(text);
-    setStatus(statusElement, "Copied.", "ok");
+    setStatus(statusElement, t("status.copied"), "ok");
   }
 
   function downloadText(filename, text) {
@@ -453,7 +704,7 @@
 
     function renderActive() {
       const text = currentText();
-      setCode(output, text || "Click Generate to create config files.");
+      setCode(output, text || t("generator.initialOutput"));
       tabs.forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.generatedFile === activeGeneratedFile);
       });
@@ -483,7 +734,7 @@
         });
         activeGeneratedFile = "server";
         renderActive();
-        setStatus(status, "Generated server.json, client.json, and route.json.", "ok");
+        setStatus(status, t("generator.generated"), "ok");
       } catch (error) {
         setStatus(status, error.message, "error");
       }
@@ -533,7 +784,7 @@
         });
         converterText = pretty(converted);
         setCode(output, converterText);
-        setStatus(status, "Converted.", "ok");
+        setStatus(status, t("converter.converted"), "ok");
       } catch (error) {
         setStatus(status, error.message, "error");
       }
@@ -550,8 +801,10 @@
 
   if (typeof document !== "undefined") {
     document.addEventListener("DOMContentLoaded", () => {
+      initI18n();
       initGenerator();
       initConverter();
+      refreshEmptyOutputs();
     });
   }
 
@@ -560,6 +813,7 @@
       convertConfig,
       generateConfigs,
       sampleConfig,
+      normalizeLanguage,
       uuidV4,
       realityKeyPair,
     };
