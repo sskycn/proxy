@@ -2,11 +2,11 @@
 
 English version: [protocol-vless.md](protocol-vless.md)
 
-`vless` 用于 VLESS 风格的 TCP 请求封装。本项目支持普通 VLESS TCP，也支持 Xray REALITY/Vision 兼容模式。
+`vless` 用于 VLESS 风格的 TCP 和 UDP 请求封装。本项目支持普通 VLESS TCP/UDP，也支持 Xray REALITY/Vision 兼容模式。
 
 ## 适用场景
 
-- 需要和 Xray VLESS TCP 配置兼容。
+- 需要和 Xray VLESS TCP/UDP 配置兼容。
 - 需要使用 REALITY/Vision。
 - 希望 token 使用 UUID 形式，便于和 Xray 用户 id 对齐。
 
@@ -15,7 +15,7 @@ English version: [protocol-vless.md](protocol-vless.md)
 | 能力 | 状态 |
 | --- | --- |
 | TCP 代理 | 支持 |
-| SOCKS5 UDP relay | 不支持 |
+| SOCKS5 UDP relay | 支持 |
 | tunnel 多路复用 | 不支持 |
 | raw/ws/h2/h3 transport | 支持 |
 | TLS | 支持 |
@@ -167,4 +167,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-本项目的 VLESS 当前只承载 TCP。需要 UDP relay 或 tunnel mux 时请选择 `native` 协议。
+VLESS 会为每个 UDP 目标打开一条 VLESS UDP 请求来支持 UDP relay。需要 tunnel mux 时请选择 `native` 协议。

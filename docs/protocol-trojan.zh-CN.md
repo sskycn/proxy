@@ -2,11 +2,11 @@
 
 English version: [protocol-trojan.md](protocol-trojan.md)
 
-`trojan` 用于标准 Trojan TCP 请求封装。Trojan 常见部署方式是 raw transport 搭配 TLS，因此生产配置通常需要服务端证书和客户端 SNI。
+`trojan` 用于标准 Trojan TCP 和 UDP 请求封装。Trojan 常见部署方式是 raw transport 搭配 TLS，因此生产配置通常需要服务端证书和客户端 SNI。
 
 ## 适用场景
 
-- 需要兼容 Trojan TCP。
+- 需要兼容 Trojan TCP/UDP。
 - 希望用 password 作为认证材料。
 - 部署入口是 TLS 端口，例如 `443`。
 
@@ -15,7 +15,7 @@ English version: [protocol-trojan.md](protocol-trojan.md)
 | 能力 | 状态 |
 | --- | --- |
 | TCP 代理 | 支持 |
-| SOCKS5 UDP relay | 不支持 |
+| SOCKS5 UDP relay | 支持 |
 | tunnel 多路复用 | 不支持 |
 | raw/ws/h2/h3 transport | 支持 |
 | TLS | 强烈建议 |
@@ -27,7 +27,7 @@ English version: [protocol-trojan.md](protocol-trojan.md)
 
 | 字段 | 位置 | 含义 |
 | --- | --- | --- |
-| `tunnel_protocol: "trojan"` | server/client | 启用 Trojan TCP 封装。 |
+| `tunnel_protocol: "trojan"` | server/client | 启用 Trojan TCP/UDP 封装。 |
 | `token` | server/client | Trojan password。协议内会使用 password hash。 |
 | `tunnel_transport` | server/client | 推荐 `raw`。也可由本项目 transport 层承载在 `ws`、`h2`、`h3` 上。 |
 | `tunnel_tls` | client | 是否使用 TLS 连接服务端。Trojan 常见部署应启用。 |
@@ -115,4 +115,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-Trojan 当前只承载 TCP。需要 UDP relay 或 tunnel mux 时请选择 `native` 协议。
+Trojan 使用标准 Trojan UDP packet 格式支持 UDP relay。需要 tunnel mux 时请选择 `native` 协议。

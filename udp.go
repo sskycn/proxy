@@ -38,6 +38,7 @@ type udpRelay struct {
 	clientAddr *net.UDPAddr
 	upstream   *udpUpstream
 	native     *nativeUDPUpstream
+	protocols  map[string]*protocolUDPUpstream
 	mu         sync.Mutex
 }
 
@@ -255,6 +256,18 @@ func (r *udpRelay) closeUpstream() {
 		}
 		r.native = nil
 	}
+	for key, upstream := range r.protocols {
+		if upstream == nil {
+			continue
+		}
+		if err := upstream.tcp.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			if logErr := logf(r.server.log, "close protocol udp upstream %s: %v\n", upstream.label, err); logErr != nil {
+				delete(r.protocols, key)
+				return
+			}
+		}
+		delete(r.protocols, key)
+	}
 	if r.upstream == nil {
 		return
 	}
@@ -268,7 +281,14 @@ func (r *udpRelay) closeUpstream() {
 }
 
 func (r *udpRelay) handleClientPacketTunnel(ctx context.Context, addr *net.UDPAddr, dgram socksUDPDatagram, targetText string) error {
-	upstream, err := r.ensureTunnelUpstream(ctx)
+	if r.server.cfg.TunnelProtocol == tunnelProtocolNative {
+		return r.handleClientPacketNativeTunnel(ctx, addr, dgram, targetText)
+	}
+	return r.handleClientPacketProtocolTunnel(ctx, addr, dgram, targetText)
+}
+
+func (r *udpRelay) handleClientPacketNativeTunnel(ctx context.Context, addr *net.UDPAddr, dgram socksUDPDatagram, targetText string) error {
+	upstream, err := r.ensureNativeTunnelUpstream(ctx)
 	if err != nil {
 		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.upstreamTarget(), targetText, err.Error()); logErr != nil {
 			return errors.Join(err, logErr)
@@ -291,7 +311,31 @@ func (r *udpRelay) handleClientPacketTunnel(ctx context.Context, addr *net.UDPAd
 	return accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, "ok")
 }
 
-func (r *udpRelay) ensureTunnelUpstream(ctx context.Context) (*nativeUDPUpstream, error) {
+func (r *udpRelay) handleClientPacketProtocolTunnel(ctx context.Context, addr *net.UDPAddr, dgram socksUDPDatagram, targetText string) error {
+	upstream, err := r.ensureProtocolTunnelUpstream(ctx, dgram.host, dgram.port)
+	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), r.server.upstreamTarget(), targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	upstream.writeMu.Lock()
+	err = upstream.writeFrame(protocolUDPFrame{
+		host:    dgram.host,
+		port:    dgram.port,
+		payload: dgram.payload,
+	})
+	upstream.writeMu.Unlock()
+	if err != nil {
+		if logErr := accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, err.Error()); logErr != nil {
+			return errors.Join(err, logErr)
+		}
+		return err
+	}
+	return accessLog(r.server.log, accessSource("socks5-udp", addr), upstream.label, targetText, "ok")
+}
+
+func (r *udpRelay) ensureNativeTunnelUpstream(ctx context.Context) (*nativeUDPUpstream, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.native != nil {
@@ -303,6 +347,37 @@ func (r *udpRelay) ensureTunnelUpstream(ctx context.Context) (*nativeUDPUpstream
 	}
 	r.native = upstream
 	go r.forwardTunnelUDPResponses(upstream)
+	return upstream, nil
+}
+
+func (r *udpRelay) ensureProtocolTunnelUpstream(ctx context.Context, host string, port uint16) (*protocolUDPUpstream, error) {
+	key := net.JoinHostPort(host, strconv.Itoa(int(port)))
+	r.mu.Lock()
+	if r.protocols == nil {
+		r.protocols = make(map[string]*protocolUDPUpstream)
+	}
+	if upstream := r.protocols[key]; upstream != nil {
+		r.mu.Unlock()
+		return upstream, nil
+	}
+	r.mu.Unlock()
+
+	upstream, err := r.server.connectViaProtocolTunnelUDP(ctx, host, port)
+	if err != nil {
+		return nil, err
+	}
+
+	r.mu.Lock()
+	if existing := r.protocols[key]; existing != nil {
+		r.mu.Unlock()
+		if err := upstream.tcp.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			return nil, err
+		}
+		return existing, nil
+	}
+	r.protocols[key] = upstream
+	r.mu.Unlock()
+	go r.forwardProtocolUDPResponses(key, upstream)
 	return upstream, nil
 }
 
@@ -330,6 +405,42 @@ func (r *udpRelay) forwardTunnelUDPResponses(upstream *nativeUDPUpstream) {
 			}
 			return
 		}
+	}
+}
+
+func (r *udpRelay) forwardProtocolUDPResponses(key string, upstream *protocolUDPUpstream) {
+	defer r.removeProtocolUDPUpstream(key, upstream)
+	for {
+		frame, err := upstream.readFrame()
+		if err != nil {
+			if !isExpectedNetworkClose(err) {
+				if logErr := logf(r.server.log, "%s udp read %s: %v\n", upstream.protocol, upstream.label, err); logErr != nil {
+					return
+				}
+			}
+			return
+		}
+		client := r.clientAddr
+		if client == nil {
+			continue
+		}
+		wrapped := buildSocksUDPDatagram(frame.host, frame.port, frame.payload)
+		if _, err := r.conn.WriteToUDP(wrapped, client); err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				if logErr := logf(r.server.log, "%s udp write client %s: %v\n", upstream.protocol, client, err); logErr != nil {
+					return
+				}
+			}
+			return
+		}
+	}
+}
+
+func (r *udpRelay) removeProtocolUDPUpstream(key string, upstream *protocolUDPUpstream) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.protocols[key] == upstream {
+		delete(r.protocols, key)
 	}
 }
 

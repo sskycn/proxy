@@ -2,11 +2,11 @@
 
 Chinese version: [protocol-vless.zh-CN.md](protocol-vless.zh-CN.md)
 
-`vless` provides VLESS-style TCP request framing. This project supports regular VLESS TCP and Xray-compatible REALITY/Vision mode.
+`vless` provides VLESS-style TCP and UDP request framing. This project supports regular VLESS TCP/UDP and Xray-compatible REALITY/Vision mode.
 
 ## Best For
 
-- Xray VLESS TCP compatibility.
+- Xray VLESS TCP/UDP compatibility.
 - REALITY/Vision deployments.
 - UUID-based user identity matching Xray `users[].id`.
 
@@ -15,7 +15,7 @@ Chinese version: [protocol-vless.zh-CN.md](protocol-vless.zh-CN.md)
 | Capability | Status |
 | --- | --- |
 | TCP proxying | Supported |
-| SOCKS5 UDP relay | Not supported |
+| SOCKS5 UDP relay | Supported |
 | Tunnel multiplexing | Not supported |
 | raw/ws/h2/h3 transport | Supported |
 | TLS | Supported |
@@ -167,4 +167,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-VLESS currently carries TCP only. Use `native` when you need UDP relay or tunnel mux.
+VLESS supports UDP relay by opening one VLESS UDP request per UDP target. Use `native` when you need tunnel mux.

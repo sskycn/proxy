@@ -2,11 +2,11 @@
 
 English version: [protocol-vmess.md](protocol-vmess.md)
 
-`vmess` 用于兼容 Xray VMess AEAD TCP 请求封装。它适合需要对接 VMess AEAD TCP 的场景，但不是本项目功能最完整的协议。
+`vmess` 用于兼容 Xray VMess AEAD TCP 和 UDP 请求封装。它适合需要对接 VMess AEAD 的场景，但不是本项目功能最完整的协议。
 
 ## 适用场景
 
-- 需要与 Xray VMess AEAD TCP 配置互通。
+- 需要与 Xray VMess AEAD TCP/UDP 配置互通。
 - 对端 VMess 用户 id 是 UUID。
 - 对端使用 `security: "none"`。
 
@@ -15,7 +15,7 @@ English version: [protocol-vmess.md](protocol-vmess.md)
 | 能力 | 状态 |
 | --- | --- |
 | TCP 代理 | 支持 |
-| SOCKS5 UDP relay | 不支持 |
+| SOCKS5 UDP relay | 支持 |
 | tunnel 多路复用 | 不支持 |
 | raw/ws/h2/h3 transport | 支持 |
 | TLS | 支持 |
@@ -27,13 +27,12 @@ English version: [protocol-vmess.md](protocol-vmess.md)
 当前兼容目标：
 
 - VMess AEAD header。
-- TCP command。
+- TCP 和 UDP command。
 - `security: "none"`。
 - 支持 Xray 默认 chunk stream/chunk masking 相关选项。
 
 当前不支持：
 
-- VMess UDP。
 - AES-GCM 或 ChaCha20-Poly1305 body security。
 - VMess mux command。
 - global padding。
@@ -43,7 +42,7 @@ English version: [protocol-vmess.md](protocol-vmess.md)
 
 | 字段 | 位置 | 含义 |
 | --- | --- | --- |
-| `tunnel_protocol: "vmess"` | server/client | 启用 VMess AEAD TCP 封装。 |
+| `tunnel_protocol: "vmess"` | server/client | 启用 VMess AEAD TCP/UDP 封装。 |
 | `token` | server/client | VMess user id，必须是 UUID。 |
 | `tunnel_transport` | server/client | 承载层，支持 `raw`、`ws`、`h2`、`h3`。 |
 | `tunnel_tls` | client | 是否用 TLS 连接服务端。 |
@@ -146,4 +145,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-如果需要 UDP relay 或 tunnel mux，请使用 `native` 协议。
+VMess 会为每个 UDP 目标打开一条 VMess UDP 请求来支持 UDP relay。需要 tunnel mux 时请选择 `native` 协议。

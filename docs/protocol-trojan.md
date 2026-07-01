@@ -2,11 +2,11 @@
 
 Chinese version: [protocol-trojan.zh-CN.md](protocol-trojan.zh-CN.md)
 
-`trojan` provides standard Trojan TCP request framing. Common Trojan deployments use raw transport over TLS, usually on port `443`.
+`trojan` provides standard Trojan TCP and UDP request framing. Common Trojan deployments use raw transport over TLS, usually on port `443`.
 
 ## Best For
 
-- Trojan TCP compatibility.
+- Trojan TCP/UDP compatibility.
 - Password-based authentication.
 - TLS entrypoints such as `443`.
 
@@ -15,7 +15,7 @@ Chinese version: [protocol-trojan.zh-CN.md](protocol-trojan.zh-CN.md)
 | Capability | Status |
 | --- | --- |
 | TCP proxying | Supported |
-| SOCKS5 UDP relay | Not supported |
+| SOCKS5 UDP relay | Supported |
 | Tunnel multiplexing | Not supported |
 | raw/ws/h2/h3 transport | Supported |
 | TLS | Strongly recommended |
@@ -27,7 +27,7 @@ Chinese version: [protocol-trojan.zh-CN.md](protocol-trojan.zh-CN.md)
 
 | Field | Side | Meaning |
 | --- | --- | --- |
-| `tunnel_protocol: "trojan"` | server/client | Enables Trojan TCP framing. |
+| `tunnel_protocol: "trojan"` | server/client | Enables Trojan TCP/UDP framing. |
 | `token` | server/client | Trojan password. The wire protocol uses the password hash. |
 | `tunnel_transport` | server/client | `raw` is recommended. Other project transports can also carry Trojan framing. |
 | `tunnel_tls` | client | Enables TLS from client to server. Recommended for Trojan deployments. |
@@ -115,4 +115,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-Trojan currently carries TCP only. Use `native` when you need UDP relay or tunnel mux.
+Trojan supports UDP relay with the standard Trojan UDP packet format. Use `native` when you need tunnel mux.

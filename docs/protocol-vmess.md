@@ -2,11 +2,11 @@
 
 Chinese version: [protocol-vmess.zh-CN.md](protocol-vmess.zh-CN.md)
 
-`vmess` provides Xray-compatible VMess AEAD TCP request framing. It is useful when you need to interoperate with VMess AEAD TCP, but it is not the most feature-complete protocol in this project.
+`vmess` provides Xray-compatible VMess AEAD TCP and UDP request framing. It is useful when you need to interoperate with VMess AEAD, but it is not the most feature-complete protocol in this project.
 
 ## Best For
 
-- Xray VMess AEAD TCP compatibility.
+- Xray VMess AEAD TCP/UDP compatibility.
 - UUID-based VMess user id.
 - Peers configured with `security: "none"`.
 
@@ -15,7 +15,7 @@ Chinese version: [protocol-vmess.zh-CN.md](protocol-vmess.zh-CN.md)
 | Capability | Status |
 | --- | --- |
 | TCP proxying | Supported |
-| SOCKS5 UDP relay | Not supported |
+| SOCKS5 UDP relay | Supported |
 | Tunnel multiplexing | Not supported |
 | raw/ws/h2/h3 transport | Supported |
 | TLS | Supported |
@@ -27,13 +27,12 @@ Chinese version: [protocol-vmess.zh-CN.md](protocol-vmess.zh-CN.md)
 Supported compatibility target:
 
 - VMess AEAD header.
-- TCP command.
+- TCP and UDP commands.
 - `security: "none"`.
 - Xray default chunk stream/chunk masking options.
 
 Not supported:
 
-- VMess UDP.
 - AES-GCM or ChaCha20-Poly1305 body security.
 - VMess mux command.
 - Global padding.
@@ -43,7 +42,7 @@ Not supported:
 
 | Field | Side | Meaning |
 | --- | --- | --- |
-| `tunnel_protocol: "vmess"` | server/client | Enables VMess AEAD TCP framing. |
+| `tunnel_protocol: "vmess"` | server/client | Enables VMess AEAD TCP/UDP framing. |
 | `token` | server/client | VMess user id. Must be a UUID. |
 | `tunnel_transport` | server/client | Carrier transport: `raw`, `ws`, `h2`, or `h3`. |
 | `tunnel_tls` | client | Enables TLS from client to server. |
@@ -146,4 +145,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-Use `native` when you need UDP relay or tunnel mux.
+VMess supports UDP relay by opening one VMess UDP request per UDP target. Use `native` when you need tunnel mux.

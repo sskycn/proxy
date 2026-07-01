@@ -51,6 +51,53 @@ func TestVMessAEADRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestProtocolUDPFrameCodecs(t *testing.T) {
+	var vlessWire bytes.Buffer
+	if err := writeLengthUDPFrame(&vlessWire, []byte("dns")); err != nil {
+		t.Fatal(err)
+	}
+	vlessPayload, err := readLengthUDPFrame(&vlessWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(vlessPayload) != "dns" {
+		t.Fatalf("vless udp payload = %q, want dns", vlessPayload)
+	}
+
+	trojanFrame := protocolUDPFrame{host: "example.com", port: 53, payload: []byte("query")}
+	var trojanWire bytes.Buffer
+	if err := writeTrojanUDPFrame(&trojanWire, trojanFrame); err != nil {
+		t.Fatal(err)
+	}
+	gotTrojanFrame, err := readTrojanUDPFrame(&trojanWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTrojanFrame.host != trojanFrame.host || gotTrojanFrame.port != trojanFrame.port || !bytes.Equal(gotTrojanFrame.payload, trojanFrame.payload) {
+		t.Fatalf("trojan udp frame = %#v, want %#v", gotTrojanFrame, trojanFrame)
+	}
+
+	iv := []byte("1234567890abcdef")
+	var vmessWire bytes.Buffer
+	vmessWriter := newVMessPacketWriter(&vmessWire, iv, true)
+	if err := vmessWriter.WritePacket([]byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := vmessWriter.WritePacket([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	vmessReader := newVMessPacketReader(&vmessWire, iv, true)
+	for _, want := range []string{"one", "two"} {
+		got, err := vmessReader.ReadPacket()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("vmess udp payload = %q, want %s", got, want)
+		}
+	}
+}
+
 type writeOnlyConn struct {
 	io.Writer
 }

@@ -243,7 +243,7 @@ Running `tcptun` without a subcommand defaults to local mode. If `config.json` c
 
 `tcptun local` forces local mode: the local mixed proxy listener forwards through the discovered gateway, even if `config.json` sets `"mode": "client"` or `"mode": "server"`.
 
-`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. Server-side outbound targets must resolve to public IP addresses; private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing. TCP is supported by every tunnel protocol; SOCKS5 UDP relay is supported by the `native` tunnel protocol.
+`tcptun server` listens for the configured tunnel protocol and connects to requested targets from the server side. Server-side outbound targets must resolve to public IP addresses; private, loopback, link-local, multicast, CGNAT, and reserved ranges are rejected before dialing. TCP and SOCKS5 UDP relay are supported by every tunnel protocol.
 
 `tcptun client` keeps the local mixed proxy listener, but upstream traffic with a parsed target is encapsulated to the tunnel server. Use `--server-addr` for the server address and the same `--token` value used by the server.
 
@@ -308,15 +308,15 @@ Raw transport can also run inside TLS: use client `--tls` and server `--tls-cert
 The tunnel protocol is selected with `--tunnel-protocol` or `tunnel_protocol` in `config.json`:
 
 - `native`: this project's compact protocol. This is the default, supports TCP, SOCKS5 UDP relay, and tunnel multiplexing.
-- `vless`: VLESS-style TCP request framing. `--token` must be a UUID.
-- `trojan`: standard Trojan TCP request framing. `--token` is used as the Trojan password. For common Xray Trojan deployments, use raw transport with client `--tls` and server `--tls-cert` plus `--tls-key`.
-- `vmess`: Xray-compatible VMess AEAD TCP request framing. `--token` must be a UUID and is used as the VMess user id. The compatibility target is `security: "none"` with AEAD header and Xray's default chunk stream/chunk masking options; AES-GCM, ChaCha20-Poly1305, VMess UDP, mux command, global padding, and authenticated length are not supported.
+- `vless`: VLESS-style TCP and UDP request framing. `--token` must be a UUID.
+- `trojan`: standard Trojan TCP and UDP request framing. `--token` is used as the Trojan password. For common Xray Trojan deployments, use raw transport with client `--tls` and server `--tls-cert` plus `--tls-key`.
+- `vmess`: Xray-compatible VMess AEAD TCP and UDP request framing. `--token` must be a UUID and is used as the VMess user id. The compatibility target is `security: "none"` with AEAD header and Xray's default chunk stream/chunk masking options; AES-GCM, ChaCha20-Poly1305, VMess mux command, global padding, and authenticated length are not supported.
 
 For Xray REALITY/Vision client compatibility, use `tcptun client` with `--transport raw`, `--tunnel-protocol vless`, `--tunnel-security reality`, and `--flow xtls-rprx-vision`. REALITY requires `--reality-server-name`, `--reality-public-key`, and a UUID `--token`; `--reality-fingerprint` defaults to `chrome`.
 
 For Xray REALITY/Vision server compatibility, use `tcptun server` with `--transport raw`, `--tunnel-protocol vless`, `--tunnel-security reality`, and `--flow xtls-rprx-vision`. REALITY server mode requires `--reality-private-key`, `--reality-server-names`, and a fallback `--reality-dest` such as `example.com:443`. `tcptun config` can auto-generate `reality_private_key` and derive the matching client `reality_public_key`. `--reality-short-ids` can restrict allowed shortIds; if omitted, the empty shortId is allowed. The Xray client must use the matching public key, server name, shortId, UUID, and flow.
 
-Only `native` currently supports SOCKS5 UDP relay and tunnel multiplexing. `vless`, `vmess`, and `trojan` carry TCP streams over the selected transport.
+All tunnel protocols support SOCKS5 UDP relay in client/server mode. Only `native` supports tunnel multiplexing; `vless`, `vmess`, and `trojan` open one compatibility UDP request per UDP target.
 
 Tunnel multiplexing is enabled by default for the `native` protocol. With multiplexing enabled, `tcptun client` keeps a shared tunnel transport connection to `tcptun server`, then opens one logical stream for each proxied TCP connection or UDP relay. This reduces WebSocket/HTTP/2/HTTP/3 handshakes and works better behind HTTP/CDN infrastructure. Use `--mux=false` or `"tunnel_mux": false` to fall back to one tunnel transport connection per proxied stream.
 
@@ -400,7 +400,7 @@ Before exit, learned direct TCP failures are merged into `route.json` or the con
 
 ## UDP Support
 
-UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway's SOCKS5 UDP support. In client/server mode, the server still enforces public-IP-only outbound access and drops UDP datagrams whose target is internal or otherwise non-public.
+UDP is supported through SOCKS5 UDP ASSOCIATE. The TCP mixed proxy port negotiates a UDP relay address, then UDP datagrams use the standard SOCKS5 UDP packet header. Internal UDP targets are sent directly from the local relay; non-internal UDP targets are relayed through the upstream gateway or, in client/server mode, through the selected tunnel protocol. The server still enforces public-IP-only outbound access and drops UDP datagrams whose target is internal or otherwise non-public.
 
 ## Access Logs
 

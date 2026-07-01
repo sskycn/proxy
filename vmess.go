@@ -25,6 +25,7 @@ const (
 	vmessVersion = byte(0x01)
 
 	vmessCommandTCP = byte(0x01)
+	vmessCommandUDP = byte(0x02)
 
 	vmessAddrIPv4   = byte(0x01)
 	vmessAddrDomain = byte(0x02)
@@ -135,6 +136,14 @@ func newVMessResponseChunkReader(reader io.Reader, session vmessSession) io.Read
 }
 
 func writeVMessTCPRequest(w io.Writer, token string, host string, port uint16) (vmessSession, error) {
+	return writeVMessRequest(w, token, vmessCommandTCP, host, port)
+}
+
+func writeVMessUDPRequest(w io.Writer, token string, host string, port uint16) (vmessSession, error) {
+	return writeVMessRequest(w, token, vmessCommandUDP, host, port)
+}
+
+func writeVMessRequest(w io.Writer, token string, cmd byte, host string, port uint16) (vmessSession, error) {
 	userID, err := parseUUIDToken(token)
 	if err != nil {
 		return vmessSession{}, err
@@ -148,7 +157,7 @@ func writeVMessTCPRequest(w io.Writer, token string, host string, port uint16) (
 	copy(session.requestBodyIV[:], randomBytes[16:32])
 	session.responseHeader = randomBytes[32]
 
-	payload, err := buildVMessRequestPayload(session, host, port)
+	payload, err := buildVMessRequestPayload(session, cmd, host, port)
 	if err != nil {
 		return vmessSession{}, err
 	}
@@ -163,7 +172,7 @@ func writeVMessTCPRequest(w io.Writer, token string, host string, port uint16) (
 	return session, nil
 }
 
-func readVMessTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+func readVMessRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
 	userID, err := parseUUIDToken(expectedToken)
 	if err != nil {
 		return protocolTunnelRequest{}, err
@@ -183,7 +192,18 @@ func readVMessTCPRequest(reader io.Reader, expectedToken string) (protocolTunnel
 	return parseVMessRequestPayload(payload)
 }
 
-func buildVMessRequestPayload(session vmessSession, host string, port uint16) ([]byte, error) {
+func readVMessTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+	req, err := readVMessRequest(reader, expectedToken)
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if req.cmd != protocolCmdTCP {
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	return req, nil
+}
+
+func buildVMessRequestPayload(session vmessSession, cmd byte, host string, port uint16) ([]byte, error) {
 	payload := make([]byte, 0, 48+len(host))
 	payload = append(payload, vmessVersion)
 	payload = append(payload, session.requestBodyIV[:]...)
@@ -192,7 +212,7 @@ func buildVMessRequestPayload(session vmessSession, host string, port uint16) ([
 	payload = append(payload, session.options)
 	payload = append(payload, vmessSecurityNone)
 	payload = append(payload, 0x00)
-	payload = append(payload, vmessCommandTCP)
+	payload = append(payload, cmd)
 	payload = appendUint16(payload, port)
 	var appendErr error
 	payload, appendErr = appendVMessAddress(payload, host)
@@ -235,7 +255,7 @@ func parseVMessRequestPayload(payload []byte) (protocolTunnelRequest, error) {
 	if security != vmessSecurityNone {
 		return protocolTunnelRequest{}, errVMessUnsupportedSecurity
 	}
-	if command != vmessCommandTCP {
+	if command != vmessCommandTCP && command != vmessCommandUDP {
 		return protocolTunnelRequest{}, errProtocolUnsupported
 	}
 	host, port, consumed, err := readVMessAddressFromPayload(payload[38:checksumStart])
@@ -246,6 +266,7 @@ func parseVMessRequestPayload(payload []byte) (protocolTunnelRequest, error) {
 		return protocolTunnelRequest{}, errTunnelInvalidLength
 	}
 	return protocolTunnelRequest{
+		cmd:          vmessProtocolCommand(command),
 		host:         host,
 		port:         port,
 		vmessSession: &session,
@@ -257,6 +278,13 @@ func newVMessRequestReader(reader io.Reader, session vmessSession) io.Reader {
 		return reader
 	}
 	return newVMessChunkReader(reader, session.requestBodyIV[:], session.options&vmessOptionChunkMasking != 0)
+}
+
+func vmessProtocolCommand(command byte) byte {
+	if command == vmessCommandUDP {
+		return protocolCmdUDP
+	}
+	return protocolCmdTCP
 }
 
 func writeVMessResponseHeader(w io.Writer, session vmessSession) error {
@@ -593,6 +621,65 @@ func (r *vmessChunkReader) readSize() (uint16, error) {
 		return 0, err
 	}
 	return size ^ binary.BigEndian.Uint16(r.maskBuf[:]), nil
+}
+
+type vmessPacketReader struct {
+	reader *vmessChunkReader
+}
+
+func newVMessPacketReader(reader io.Reader, iv []byte, masked bool) *vmessPacketReader {
+	return &vmessPacketReader{reader: newVMessChunkReader(reader, iv, masked)}
+}
+
+func (r *vmessPacketReader) ReadPacket() ([]byte, error) {
+	size, err := r.reader.readSize()
+	if err != nil {
+		return nil, err
+	}
+	if size == 0 {
+		return nil, io.EOF
+	}
+	payload := make([]byte, int(size))
+	if _, err := io.ReadFull(r.reader.reader, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+type vmessPacketWriter struct {
+	writer io.Writer
+	shake  sha3.ShakeHash
+	size   [2]byte
+	mask   [2]byte
+}
+
+func newVMessPacketWriter(writer io.Writer, iv []byte, masked bool) *vmessPacketWriter {
+	var shake sha3.ShakeHash
+	if masked {
+		shake = sha3.NewShake128()
+		if _, err := shake.Write(iv); err != nil {
+			panic(err)
+		}
+	}
+	return &vmessPacketWriter{
+		writer: writer,
+		shake:  shake,
+	}
+}
+
+func (w *vmessPacketWriter) WritePacket(payload []byte) error {
+	if len(payload) > 0xffff {
+		return errTunnelInvalidLength
+	}
+	size := uint16(len(payload))
+	if w.shake != nil {
+		if _, err := io.ReadFull(w.shake, w.mask[:]); err != nil {
+			return err
+		}
+		size ^= binary.BigEndian.Uint16(w.mask[:])
+	}
+	binary.BigEndian.PutUint16(w.size[:], size)
+	return writeBuffers(w.writer, w.size[:], payload)
 }
 
 type vmessChunkWriter struct {

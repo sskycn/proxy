@@ -3506,6 +3506,135 @@ func TestRunProxyClientServerDropsPrivateSOCKS5UDPTunnel(t *testing.T) {
 	}
 }
 
+func TestRunProxyClientServerDropsPrivateProtocolSOCKS5UDP(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		token    string
+	}{
+		{
+			name:     "vless",
+			protocol: tunnelProtocolVLESS,
+			token:    "11111111-1111-4111-8111-111111111111",
+		},
+		{
+			name:     "vmess",
+			protocol: tunnelProtocolVMess,
+			token:    "22222222-2222-4222-8222-222222222222",
+		},
+		{
+			name:     "trojan",
+			protocol: tunnelProtocolTrojan,
+			token:    "secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			direct, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					t.Errorf("close direct udp listener: %v", err)
+				}
+			})
+
+			serverAddr := reserveTCPAddr(t)
+			serverCtx, serverCancel := context.WithCancel(context.Background())
+			defer serverCancel()
+			serverErr := make(chan error, 1)
+			var serverLog bytes.Buffer
+			go func() {
+				serverErr <- runProxy(serverCtx, config{
+					Mode:            proxyModeServer,
+					ListenAddr:      serverAddr,
+					Token:           tt.token,
+					TunnelProtocol:  tt.protocol,
+					TunnelTransport: tunnelTransportRaw,
+					Verbose:         true,
+					DialTimeout:     time.Second,
+					BufferSize:      4096,
+				}, &serverLog)
+			}()
+			waitForTCP(t, serverAddr)
+
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			configBody := []byte(`{
+				"force_upstream": {
+					"ip_cidrs": ["127.0.0.1/32"]
+				}
+			}`)
+			if err := os.WriteFile(configPath, configBody, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			clientAddr := reserveTCPAddr(t)
+			clientCtx, clientCancel := context.WithCancel(context.Background())
+			defer clientCancel()
+			clientErr := make(chan error, 1)
+			go func() {
+				clientErr <- runProxy(clientCtx, config{
+					Mode:            proxyModeClient,
+					ListenAddr:      clientAddr,
+					ServerAddr:      serverAddr,
+					Token:           tt.token,
+					TunnelProtocol:  tt.protocol,
+					TunnelTransport: tunnelTransportRaw,
+					RouteConfigPath: configPath,
+					DialTimeout:     time.Second,
+					BufferSize:      4096,
+				}, io.Discard)
+			}()
+			waitForTCP(t, clientAddr)
+
+			control, relayAddr := dialSocks5UDPAssociate(t, clientAddr)
+			defer func() {
+				if err := control.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					t.Errorf("close socks control: %v", err)
+				}
+			}()
+
+			udpClient, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := udpClient.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					t.Errorf("close udp client: %v", err)
+				}
+			})
+			targetPort := uint16(direct.LocalAddr().(*net.UDPAddr).Port)
+			packet := buildSocksUDPDatagram("127.0.0.1", targetPort, []byte("hi"))
+			if _, err := udpClient.WriteToUDP(packet, relayAddr); err != nil {
+				t.Fatal(err)
+			}
+			if err := udpClient.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, udpBufferSize)
+			if _, _, err := udpClient.ReadFromUDP(buf); err == nil || !isTimeoutError(err) {
+				t.Fatalf("udp client read error = %v, want timeout", err)
+			}
+			if err := direct.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := direct.ReadFromUDP(buf); err == nil || !isTimeoutError(err) {
+				t.Fatalf("direct udp read error = %v, want timeout", err)
+			}
+
+			stopProxy(t, clientCancel, clientErr)
+			stopProxy(t, serverCancel, serverErr)
+
+			wantLog := "drop " + tt.protocol + " udp " + net.JoinHostPort("127.0.0.1", strconv.Itoa(int(targetPort)))
+			if got := serverLog.String(); !strings.Contains(got, wantLog) {
+				t.Fatalf("server log = %q, missing %q", got, wantLog)
+			}
+		})
+	}
+}
+
 func TestBuildTunnelURLTransports(t *testing.T) {
 	tests := []struct {
 		name      string

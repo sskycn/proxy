@@ -155,14 +155,14 @@ For parsed TCP proxy traffic, force-upstream route rules win first. Otherwise tc
 | Protocol | TCP | SOCKS5 UDP relay | Tunnel mux | TLS | REALITY/Vision | Xray compatibility target |
 | --- | --- | --- | --- | --- | --- | --- |
 | native | yes | yes | yes | yes | no | Not applicable |
-| vless | yes | no | no | yes | yes | VLESS TCP, REALITY/Vision |
-| vmess | yes | no | no | yes | no | VMess AEAD TCP, security none |
-| trojan | yes | no | no | recommended | no | Trojan TCP |
+| vless | yes | yes | no | yes | yes | VLESS TCP/UDP, REALITY/Vision |
+| vmess | yes | yes | no | yes | no | VMess AEAD TCP/UDP, security none |
+| trojan | yes | yes | no | recommended | no | Trojan TCP/UDP |
 
 ## Which Protocol Should I Use?
 
 - Use `native` when both sides run this project and you want the best feature coverage.
 - Use `vless` when you need VLESS or Xray REALITY/Vision compatibility.
-- Use `vmess` when you need Xray VMess AEAD TCP compatibility with `security: "none"`.
-- Use `trojan` when you need Trojan TCP compatibility, usually with raw TLS.
+- Use `vmess` when you need Xray VMess AEAD TCP/UDP compatibility with `security: "none"`.
+- Use `trojan` when you need Trojan TCP/UDP compatibility, usually with raw TLS.
 - Use `ws` transport when the server sits behind nginx or a common HTTP/CDN path.

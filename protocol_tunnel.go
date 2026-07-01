@@ -36,6 +36,7 @@ var (
 )
 
 type protocolTunnelRequest struct {
+	cmd          byte
 	host         string
 	port         uint16
 	flow         string
@@ -47,17 +48,24 @@ func (s *proxyServer) handleProtocolTunnelConn(ctx context.Context, conn net.Con
 	if err != nil {
 		return err
 	}
-	return s.handleProtocolTunnelTCP(ctx, conn, reader, req)
+	switch req.cmd {
+	case protocolCmdTCP:
+		return s.handleProtocolTunnelTCP(ctx, conn, reader, req)
+	case protocolCmdUDP:
+		return s.handleProtocolTunnelUDP(ctx, conn, reader, req)
+	default:
+		return errProtocolUnsupported
+	}
 }
 
 func (s *proxyServer) readProtocolTunnelRequest(reader *bufio.Reader) (protocolTunnelRequest, error) {
 	switch s.cfg.TunnelProtocol {
 	case tunnelProtocolVLESS:
-		return readVLESSTCPRequest(reader, s.cfg.Token)
+		return readVLESSRequest(reader, s.cfg.Token)
 	case tunnelProtocolTrojan:
-		return readTrojanTCPRequest(reader, s.cfg.Token)
+		return readTrojanRequest(reader, s.cfg.Token)
 	case tunnelProtocolVMess:
-		return readVMessTCPRequest(reader, s.cfg.Token)
+		return readVMessRequest(reader, s.cfg.Token)
 	default:
 		return protocolTunnelRequest{}, fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
 	}
@@ -123,9 +131,8 @@ func (s *proxyServer) handleProtocolTunnelTCP(ctx context.Context, conn net.Conn
 }
 
 func (s *proxyServer) prepareVLESSBodyConn(conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) (net.Conn, error) {
-	configuredFlow := strings.TrimSpace(s.cfg.TunnelFlow)
-	if req.flow != configuredFlow {
-		return nil, fmt.Errorf("vless flow mismatch: got %q, configured %q", req.flow, configuredFlow)
+	if err := s.validateVLESSFlow(req); err != nil {
+		return nil, err
 	}
 	if req.flow == "" {
 		return nil, nil
@@ -138,6 +145,17 @@ func (s *proxyServer) prepareVLESSBodyConn(conn net.Conn, reader *bufio.Reader, 
 		return nil, err
 	}
 	return newVisionConnWithReader(conn, userID, nil, reader), nil
+}
+
+func (s *proxyServer) validateVLESSFlow(req protocolTunnelRequest) error {
+	configuredFlow := strings.TrimSpace(s.cfg.TunnelFlow)
+	if req.flow != configuredFlow {
+		return fmt.Errorf("vless flow mismatch: got %q, configured %q", req.flow, configuredFlow)
+	}
+	if req.flow != "" && !isVisionFlow(req.flow) {
+		return fmt.Errorf("unsupported vless flow %q", req.flow)
+	}
+	return nil
 }
 
 func (s *proxyServer) writeProtocolTunnelResponse(w io.Writer) error {
@@ -195,9 +213,9 @@ func (s *proxyServer) connectViaProtocolTunnelTCP(ctx context.Context, req socks
 func (s *proxyServer) writeProtocolTunnelRequest(w io.Writer, req socksRequest) error {
 	switch s.cfg.TunnelProtocol {
 	case tunnelProtocolVLESS:
-		return writeVLESSTCPRequest(w, s.cfg.Token, s.cfg.TunnelFlow, req.host, req.port)
+		return writeVLESSRequest(w, s.cfg.Token, s.cfg.TunnelFlow, protocolCmdTCP, req.host, req.port)
 	case tunnelProtocolTrojan:
-		return writeTrojanTCPRequest(w, s.cfg.Token, req.host, req.port)
+		return writeTrojanRequest(w, s.cfg.Token, protocolCmdTCP, req.host, req.port)
 	case tunnelProtocolVMess:
 		_, err := writeVMessTCPRequest(w, s.cfg.Token, req.host, req.port)
 		return err
@@ -219,7 +237,7 @@ func (s *proxyServer) readProtocolTunnelResponse(reader io.Reader) error {
 	}
 }
 
-func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, port uint16) error {
+func writeVLESSRequest(w io.Writer, token string, flow string, cmd byte, host string, port uint16) error {
 	userID, err := parseUUIDToken(token)
 	if err != nil {
 		return err
@@ -233,7 +251,7 @@ func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, p
 	header = append(header, userID[:]...)
 	header = append(header, byte(len(addons)))
 	header = append(header, addons...)
-	header = append(header, protocolCmdTCP)
+	header = append(header, cmd)
 	header = appendUint16(header, port)
 	var appendErr error
 	header, appendErr = appendVLESSAddress(header, host)
@@ -241,6 +259,10 @@ func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, p
 		return appendErr
 	}
 	return writeAll(w, header)
+}
+
+func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, port uint16) error {
+	return writeVLESSRequest(w, token, flow, protocolCmdTCP, host, port)
 }
 
 func vlessHeaderAddons(flow string) ([]byte, error) {
@@ -273,7 +295,7 @@ func appendVarint(dst []byte, value uint64) []byte {
 	return append(dst, byte(value))
 }
 
-func readVLESSTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+func readVLESSRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
 	header := make([]byte, 18)
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return protocolTunnelRequest{}, err
@@ -306,7 +328,7 @@ func readVLESSTCPRequest(reader io.Reader, expectedToken string) (protocolTunnel
 	if _, err := io.ReadFull(reader, tail); err != nil {
 		return protocolTunnelRequest{}, err
 	}
-	if tail[0] != protocolCmdTCP {
+	if tail[0] != protocolCmdTCP && tail[0] != protocolCmdUDP {
 		return protocolTunnelRequest{}, errProtocolUnsupported
 	}
 	host, err := readVLESSAddress(reader, tail[3])
@@ -314,10 +336,22 @@ func readVLESSTCPRequest(reader io.Reader, expectedToken string) (protocolTunnel
 		return protocolTunnelRequest{}, err
 	}
 	return protocolTunnelRequest{
+		cmd:  tail[0],
 		host: host,
 		port: binary.BigEndian.Uint16(tail[1:3]),
 		flow: flow,
 	}, nil
+}
+
+func readVLESSTCPRequest(reader io.Reader, expectedToken string) (protocolTunnelRequest, error) {
+	req, err := readVLESSRequest(reader, expectedToken)
+	if err != nil {
+		return protocolTunnelRequest{}, err
+	}
+	if req.cmd != protocolCmdTCP {
+		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	return req, nil
 }
 
 func vlessAddonsFlow(addons []byte) (string, error) {
@@ -440,10 +474,10 @@ func readVLESSAddress(reader io.Reader, atyp byte) (string, error) {
 	}
 }
 
-func writeTrojanTCPRequest(w io.Writer, password string, host string, port uint16) error {
+func writeTrojanRequest(w io.Writer, password string, cmd byte, host string, port uint16) error {
 	header := make([]byte, 0, 96+len(host))
 	header = append(header, []byte(trojanPasswordHash(password))...)
-	header = append(header, '\r', '\n', protocolCmdTCP)
+	header = append(header, '\r', '\n', cmd)
 	var appendErr error
 	header, appendErr = appendSocksAddress(header, host, port)
 	if appendErr != nil {
@@ -453,7 +487,7 @@ func writeTrojanTCPRequest(w io.Writer, password string, host string, port uint1
 	return writeAll(w, header)
 }
 
-func readTrojanTCPRequest(reader *bufio.Reader, expectedPassword string) (protocolTunnelRequest, error) {
+func readTrojanRequest(reader *bufio.Reader, expectedPassword string) (protocolTunnelRequest, error) {
 	line, err := readLineLimited(reader, protocolMaxLineLength)
 	if err != nil {
 		return protocolTunnelRequest{}, err
@@ -469,7 +503,7 @@ func readTrojanTCPRequest(reader *bufio.Reader, expectedPassword string) (protoc
 	if err != nil {
 		return protocolTunnelRequest{}, err
 	}
-	if cmd != protocolCmdTCP {
+	if cmd != protocolCmdTCP && cmd != protocolCmdUDP {
 		return protocolTunnelRequest{}, errProtocolUnsupported
 	}
 	host, port, err := readSocksAddress(reader)
@@ -483,7 +517,7 @@ func readTrojanTCPRequest(reader *bufio.Reader, expectedPassword string) (protoc
 	if crlf[0] != '\r' || crlf[1] != '\n' {
 		return protocolTunnelRequest{}, errProtocolUnauthorized
 	}
-	return protocolTunnelRequest{host: host, port: port}, nil
+	return protocolTunnelRequest{cmd: cmd, host: host, port: port}, nil
 }
 
 func trojanPasswordHash(password string) string {
