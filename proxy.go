@@ -714,7 +714,7 @@ func upstreamStickySource(addr net.Addr) string {
 func systemLocalSourceSet() (*localSourceSet, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return &localSourceSet{ips: map[netip.Addr]struct{}{}}, nil
 	}
 
 	set := &localSourceSet{ips: make(map[netip.Addr]struct{}, len(interfaces)*2)}
@@ -724,7 +724,7 @@ func systemLocalSourceSet() (*localSourceSet, error) {
 		}
 		addrs, err := iface.Addrs()
 		if err != nil {
-			return nil, err
+			continue
 		}
 		for _, addr := range addrs {
 			ip := addrIP(addr)
