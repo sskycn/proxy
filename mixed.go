@@ -130,7 +130,8 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 	target := net.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
 	logTarget := accessTarget(req.host, strconv.Itoa(int(req.port)))
 	cacheKey := directCacheKey("tcp", req.host, strconv.Itoa(int(req.port)))
-	if !s.routes.shouldForceUpstream(req.host) {
+	routeSource := s.shouldSelectRouteForSource(client.RemoteAddr())
+	if routeSource && !s.routes.shouldForceUpstream(req.host) {
 		direct, tried, err := s.connectDirectTCP(ctx, cacheKey, req.host, target)
 		if err != nil && s.cfg.Verbose {
 			if logErr := logf(s.log, "direct socks %s failed, fallback upstream: %v\n", target, err); logErr != nil {
@@ -179,7 +180,7 @@ func (s *proxyServer) handleSocks5Connect(ctx context.Context, client net.Conn, 
 			}
 			return accessLog(s.log, accessSource("socks5", client.RemoteAddr()), proxyField, logTarget, "ok")
 		}
-	} else if s.cfg.Verbose {
+	} else if s.cfg.Verbose && routeSource {
 		if err := logf(s.log, "force upstream socks %s\n", target); err != nil {
 			return err
 		}
@@ -228,7 +229,8 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 	logTarget := accessTarget(host, port)
 
 	cacheKey := directCacheKey("tcp", targetHost, port)
-	if !s.routes.shouldForceUpstream(targetHost) {
+	routeSource := s.shouldSelectRouteForSource(client.RemoteAddr())
+	if routeSource && !s.routes.shouldForceUpstream(targetHost) {
 		direct, tried, err := s.connectDirectTCP(ctx, cacheKey, targetHost, directTarget)
 		if err != nil && s.cfg.Verbose {
 			if logErr := logf(s.log, "direct http %s failed, fallback upstream: %v\n", directTarget, err); logErr != nil {
@@ -324,7 +326,7 @@ func (s *proxyServer) handleHTTPProxy(ctx context.Context, client net.Conn, read
 				return accessLog(s.log, accessSource(logProtocol, client.RemoteAddr()), "-", logTarget, "ok")
 			}
 		}
-	} else if s.cfg.Verbose {
+	} else if s.cfg.Verbose && routeSource {
 		if err := logf(s.log, "force upstream http %s\n", directTarget); err != nil {
 			return err
 		}

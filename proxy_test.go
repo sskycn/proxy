@@ -17,6 +17,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,6 +33,40 @@ type channelLogWriter struct {
 func (w channelLogWriter) Write(p []byte) (int, error) {
 	w.ch <- string(append([]byte(nil), p...))
 	return len(p), nil
+}
+
+type remoteAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (c remoteAddrConn) RemoteAddr() net.Addr {
+	return c.remote
+}
+
+func TestLocalSourceSetContainsLocalAddresses(t *testing.T) {
+	localIP := netip.MustParseAddr("192.168.50.10")
+	set := &localSourceSet{ips: map[netip.Addr]struct{}{localIP: {}}}
+
+	tests := []struct {
+		name string
+		addr net.Addr
+		want bool
+	}{
+		{name: "loopback tcp", addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}, want: true},
+		{name: "loopback udp", addr: &net.UDPAddr{IP: net.ParseIP("::1"), Port: 1234}, want: true},
+		{name: "configured local", addr: &net.TCPAddr{IP: net.ParseIP("192.168.50.10"), Port: 1234}, want: true},
+		{name: "remote", addr: &net.TCPAddr{IP: net.ParseIP("192.168.50.11"), Port: 1234}, want: false},
+		{name: "nil", addr: nil, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := set.contains(tc.addr); got != tc.want {
+				t.Fatalf("contains(%v) = %v, want %v", tc.addr, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestRunProxyRejectsUnknownTrafficWithoutUpstreamForward(t *testing.T) {
@@ -2630,6 +2665,119 @@ func readSocks5ConnectTarget(reader *bufio.Reader, conn net.Conn) (string, error
 	}
 	port := binary.BigEndian.Uint16(portBytes)
 	return net.JoinHostPort(host, strconv.Itoa(int(port))), nil
+}
+
+func TestProxyServerSkipsRouteSelectionForNonLocalSOCKS5Source(t *testing.T) {
+	direct, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := direct.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close direct listener: %v", err)
+		}
+	})
+	directHit := make(chan struct{}, 1)
+	go acceptSignal(direct, directHit)
+
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := upstream.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close upstream listener: %v", err)
+		}
+	})
+	upstreamTargets := make(chan string, 1)
+	upstreamErr := make(chan error, 1)
+	go socks5ConnectUpstream(upstream, upstreamTargets, upstreamErr, 1)
+
+	server := &proxyServer{
+		cfg: config{
+			Mode:               proxyModeLocal,
+			DialTimeout:        time.Second,
+			DirectProbeTimeout: 20 * time.Millisecond,
+			BufferSize:         4096,
+		},
+		resolver: &upstreamResolver{
+			cfg: config{DialTimeout: time.Second},
+			targets: map[string]upstreamTargetState{
+				upstream.Addr().String(): {target: upstream.Addr().String()},
+			},
+		},
+		dialer: net.Dialer{Timeout: time.Second},
+		direct: newDirectCache(),
+		sticky: newUpstreamSticky(),
+		routes: &routeRules{},
+		local:  &localSourceSet{ips: map[netip.Addr]struct{}{}},
+		log:    io.Discard,
+	}
+	server.bufferPool.New = func() any {
+		buf := make([]byte, server.cfg.BufferSize)
+		return &buf
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer func() {
+		if err := clientConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close client pipe: %v", err)
+		}
+	}()
+	wrappedServerConn := remoteAddrConn{
+		Conn:   serverConn,
+		remote: &net.TCPAddr{IP: net.ParseIP("198.51.100.50"), Port: 54321},
+	}
+
+	targetHost, targetPortText, err := net.SplitHostPort(direct.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetPort, err := strconv.Atoi(targetPortText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := socksRequest{cmd: socksCmdConnect, host: targetHost, port: uint16(targetPort)}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.handleSocks5Connect(context.Background(), wrappedServerConn, bufio.NewReader(wrappedServerConn), req)
+	}()
+
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(clientConn, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != socksReplySucceeded {
+		t.Fatalf("socks reply = %v", reply)
+	}
+	select {
+	case target := <-upstreamTargets:
+		if target != direct.Addr().String() {
+			t.Fatalf("upstream target = %q, want %s", target, direct.Addr())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for upstream target")
+	}
+	select {
+	case <-directHit:
+		t.Fatal("non-local source was routed directly")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case err := <-upstreamErr:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler did not finish")
+	}
 }
 
 func TestRunProxyDirectsInternalSOCKS5(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"runtime"
 	"sort"
 	"strconv"
@@ -220,6 +221,7 @@ type proxyServer struct {
 	direct     *directCache
 	sticky     *upstreamSticky
 	routes     *routeRules
+	local      *localSourceSet
 	bufferPool sync.Pool
 	log        io.Writer
 	mux        tunnelMuxClient
@@ -234,6 +236,10 @@ type directCache struct {
 type upstreamSticky struct {
 	mu      sync.RWMutex
 	targets map[string]string
+}
+
+type localSourceSet struct {
+	ips map[netip.Addr]struct{}
 }
 
 func newDirectCache() *directCache {
@@ -410,6 +416,10 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 	if err != nil {
 		return err
 	}
+	localSources, err := systemLocalSourceSet()
+	if err != nil {
+		return err
+	}
 
 	var resolver *upstreamResolver
 	if cfg.Mode == proxyModeLocal {
@@ -429,6 +439,7 @@ func runProxy(ctx context.Context, cfg config, log io.Writer) (retErr error) {
 		direct: newDirectCache(),
 		sticky: newUpstreamSticky(),
 		routes: routes,
+		local:  localSources,
 		log:    log,
 	}
 	server.bufferPool.New = func() any {
@@ -698,6 +709,90 @@ func upstreamStickySource(addr net.Addr) string {
 		return trimHostBrackets(host)
 	}
 	return addr.String()
+}
+
+func systemLocalSourceSet() (*localSourceSet, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	set := &localSourceSet{ips: make(map[netip.Addr]struct{}, len(interfaces)*2)}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return nil, err
+		}
+		for _, addr := range addrs {
+			ip := addrIP(addr)
+			if ip == nil {
+				continue
+			}
+			parsed, ok := netip.AddrFromSlice(ip)
+			if !ok {
+				continue
+			}
+			set.ips[parsed.Unmap()] = struct{}{}
+		}
+	}
+	return set, nil
+}
+
+func addrIP(addr net.Addr) net.IP {
+	switch value := addr.(type) {
+	case *net.IPAddr:
+		return value.IP
+	case *net.IPNet:
+		return value.IP
+	case *net.TCPAddr:
+		return value.IP
+	case *net.UDPAddr:
+		return value.IP
+	default:
+		return nil
+	}
+}
+
+func (s *proxyServer) shouldSelectRouteForSource(addr net.Addr) bool {
+	if s == nil || s.local == nil {
+		return false
+	}
+	return s.local.contains(addr)
+}
+
+func (s *localSourceSet) contains(addr net.Addr) bool {
+	if s == nil || addr == nil {
+		return false
+	}
+	ip := addrIP(addr)
+	if ip == nil {
+		host, _, err := net.SplitHostPort(addr.String())
+		if err != nil {
+			return false
+		}
+		parsed, err := netip.ParseAddr(trimHostBrackets(host))
+		if err != nil {
+			return false
+		}
+		return s.containsIP(parsed)
+	}
+	parsed, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return s.containsIP(parsed)
+}
+
+func (s *localSourceSet) containsIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if ip.IsLoopback() {
+		return true
+	}
+	_, ok := s.ips[ip]
+	return ok
 }
 
 type upstreamCandidate struct {

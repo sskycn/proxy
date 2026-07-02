@@ -165,7 +165,7 @@ func (r *udpRelay) handleClientPacket(ctx context.Context, addr *net.UDPAddr, pa
 		}
 		return err
 	}
-	if !r.server.routes.shouldForceUpstream(dgram.host) && hostIsInternal(ctx, dgram.host) {
+	if r.server.shouldSelectRouteForSource(addr) && !r.server.routes.shouldForceUpstream(dgram.host) && hostIsInternal(ctx, dgram.host) {
 		targetText := net.JoinHostPort(dgram.host, strconv.Itoa(int(dgram.port)))
 		logTarget := accessTarget(dgram.host, strconv.Itoa(int(dgram.port)))
 		target, err := net.ResolveUDPAddr("udp", targetText)
