@@ -145,4 +145,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-VMess supports UDP relay by opening one VMess UDP request per UDP target. Use `native` when you need tunnel mux.
+VMess supports UDP relay by opening one VMess UDP request per UDP target when mux is disabled. When `tunnel_mux` is enabled, VMess uses Xray-compatible mux.cool frames on one shared VMess TCP connection, so tcptun can interoperate with Xray mux and with another tcptun endpoint.

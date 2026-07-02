@@ -13,12 +13,16 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	protocolCmdTCP = byte(0x01)
 	protocolCmdUDP = byte(0x02)
 	protocolCmdMux = byte(0x03)
+
+	protocolPrivateMuxHost = "mux.tcptun.invalid"
+	protocolPrivateMuxPort = uint16(1)
 
 	trojanCmdUDP = byte(0x03)
 
@@ -46,10 +50,35 @@ type protocolTunnelRequest struct {
 	vmessSession *vmessSession
 }
 
+type vlessClientConn struct {
+	net.Conn
+	headerRead bool
+}
+
+func newVLESSClientConn(conn net.Conn) net.Conn {
+	return &vlessClientConn{Conn: conn}
+}
+
+func (c *vlessClientConn) Read(p []byte) (int, error) {
+	if !c.headerRead {
+		if err := readVLESSResponse(c.Conn); err != nil {
+			return 0, err
+		}
+		c.headerRead = true
+	}
+	return c.Conn.Read(p)
+}
+
 func (s *proxyServer) handleProtocolTunnelConn(ctx context.Context, conn net.Conn, reader *bufio.Reader) error {
 	req, err := s.readProtocolTunnelRequest(reader)
 	if err != nil {
 		return err
+	}
+	if s.isProtocolPrivateMuxRequest(req) {
+		return s.handleProtocolPrivateMux(ctx, conn, reader, req)
+	}
+	if s.isProtocolXrayMuxRequest(req) {
+		return s.handleProtocolXrayMux(ctx, conn, reader, req)
 	}
 	switch req.cmd {
 	case protocolCmdTCP:
@@ -60,6 +89,30 @@ func (s *proxyServer) handleProtocolTunnelConn(ctx context.Context, conn net.Con
 		return s.handleProtocolTunnelMux(ctx, conn, reader, req)
 	default:
 		return errProtocolUnsupported
+	}
+}
+
+func (s *proxyServer) isProtocolXrayMuxRequest(req protocolTunnelRequest) bool {
+	if !s.cfg.TunnelMux || !isXrayCompatibleMuxProtocol(s.cfg.TunnelProtocol) {
+		return false
+	}
+	if s.cfg.TunnelProtocol == tunnelProtocolVLESS {
+		return req.cmd == protocolCmdMux
+	}
+	return req.cmd == protocolCmdTCP && isXrayMuxTarget(req.host, req.port)
+}
+
+func (s *proxyServer) isProtocolPrivateMuxRequest(req protocolTunnelRequest) bool {
+	if !s.cfg.TunnelMux {
+		return false
+	}
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		return req.cmd == protocolCmdMux
+	case tunnelProtocolVMess, tunnelProtocolTrojan:
+		return req.cmd == protocolCmdTCP && strings.EqualFold(req.host, protocolPrivateMuxHost) && req.port == protocolPrivateMuxPort
+	default:
+		return false
 	}
 }
 
@@ -178,6 +231,41 @@ func (s *proxyServer) writeProtocolTunnelResponse(w io.Writer) error {
 
 func (s *proxyServer) connectViaProtocolTunnelTCP(ctx context.Context, req socksRequest) (net.Conn, string, error) {
 	target := s.cfg.ServerAddr
+	if s.cfg.TunnelMux {
+		if s.canUseXrayMuxClient() {
+			conn, err := s.openXrayMuxTCPStream(ctx, req)
+			if err == nil {
+				return conn, target, nil
+			}
+			s.resetCurrentXrayMuxSession()
+			if s.cfg.Verbose {
+				if logErr := logf(s.log, "open xray mux tcp stream failed: %v; falling back to private mux or single protocol connection\n", err); logErr != nil {
+					return nil, target, errors.Join(err, logErr)
+				}
+			}
+		}
+		conn, err := s.openTunnelMuxStream(ctx)
+		if err != nil {
+			if s.cfg.Verbose {
+				if logErr := logf(s.log, "open protocol mux tcp stream failed: %v; falling back to single protocol connection\n", err); logErr != nil {
+					return nil, target, errors.Join(err, logErr)
+				}
+			}
+		} else {
+			if err := s.writeMuxStreamTCPRequest(conn, req); err != nil {
+				if shouldFallbackProtocolMux(err) {
+					s.resetCurrentTunnelMuxSession()
+				} else {
+					return nil, target, err
+				}
+			} else {
+				return conn, target, nil
+			}
+			if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+				return nil, target, err
+			}
+		}
+	}
 	conn, err := s.dialTunnelTransport(ctx)
 	if err != nil {
 		return nil, target, err
@@ -209,10 +297,89 @@ func (s *proxyServer) connectViaProtocolTunnelTCP(ctx context.Context, req socks
 	if vmessSession != nil {
 		return newVMessClientConn(conn, *vmessSession), target, nil
 	}
+	if s.cfg.TunnelProtocol == tunnelProtocolVLESS {
+		return newVLESSClientConn(conn), target, nil
+	}
 	if err := s.readProtocolTunnelResponse(conn); err != nil {
 		return nil, target, closeAfterError(conn, err)
 	}
 	return conn, target, nil
+}
+
+func (s *proxyServer) writeMuxStreamTCPRequest(conn net.Conn, req socksRequest) error {
+	if err := writeTunnelRequest(conn, tunnelRequest{
+		cmd:   tunnelCmdTCPConnect,
+		token: s.cfg.Token,
+		host:  req.host,
+		port:  req.port,
+	}); err != nil {
+		return closeAfterError(conn, err)
+	}
+	if err := readTunnelResponse(conn); err != nil {
+		return closeAfterError(conn, err)
+	}
+	return nil
+}
+
+func shouldFallbackProtocolMux(err error) bool {
+	return errors.Is(err, errTunnelBadMagic) ||
+		errors.Is(err, errTunnelBadVersion) ||
+		errors.Is(err, errMuxClosed) ||
+		isExpectedNetworkClose(err)
+}
+
+func (s *proxyServer) openProtocolMuxConn(conn net.Conn, reader *bufio.Reader) (net.Conn, io.Reader, error) {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		if err := writeVLESSMuxRequest(conn, s.cfg.Token, s.cfg.TunnelFlow); err != nil {
+			return nil, nil, err
+		}
+		if isVisionFlow(s.cfg.TunnelFlow) {
+			userID, err := parseUUIDToken(s.cfg.Token)
+			if err != nil {
+				return nil, nil, err
+			}
+			vision := newVisionConn(conn, userID, readVLESSResponse)
+			if err := vision.WriteInitialPadding(); err != nil {
+				return nil, nil, err
+			}
+			return vision, vision, nil
+		}
+		if err := s.readProtocolMuxVLESSResponse(conn, reader); err != nil {
+			return nil, nil, err
+		}
+		return conn, reader, nil
+	case tunnelProtocolVMess:
+		session, err := writeVMessTCPRequest(conn, s.cfg.Token, protocolPrivateMuxHost, protocolPrivateMuxPort)
+		if err != nil {
+			return nil, nil, err
+		}
+		vmessConn := newVMessClientConn(conn, session)
+		return vmessConn, vmessConn, nil
+	case tunnelProtocolTrojan:
+		if err := writeTrojanRequest(conn, s.cfg.Token, protocolCmdTCP, protocolPrivateMuxHost, protocolPrivateMuxPort); err != nil {
+			return nil, nil, err
+		}
+		return conn, reader, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func (s *proxyServer) readProtocolMuxVLESSResponse(conn net.Conn, reader io.Reader) error {
+	timeout := s.cfg.DialTimeout
+	if timeout <= 0 {
+		timeout = defaultConfig().DialTimeout
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	err := readVLESSResponse(reader)
+	clearErr := conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		return errors.Join(err, clearErr)
+	}
+	return clearErr
 }
 
 func (s *proxyServer) writeProtocolTunnelRequest(w io.Writer, req socksRequest) error {
@@ -268,6 +435,24 @@ func writeVLESSRequest(w io.Writer, token string, flow string, cmd byte, host st
 
 func writeVLESSTCPRequest(w io.Writer, token string, flow string, host string, port uint16) error {
 	return writeVLESSRequest(w, token, flow, protocolCmdTCP, host, port)
+}
+
+func writeVLESSMuxRequest(w io.Writer, token string, flow string) error {
+	userID, err := parseUUIDToken(token)
+	if err != nil {
+		return err
+	}
+	addons, err := vlessHeaderAddons(flow)
+	if err != nil {
+		return err
+	}
+	header := make([]byte, 0, 19+len(addons))
+	header = append(header, vlessVersion)
+	header = append(header, userID[:]...)
+	header = append(header, byte(len(addons)))
+	header = append(header, addons...)
+	header = append(header, protocolCmdMux)
+	return writeAll(w, header)
 }
 
 func vlessHeaderAddons(flow string) ([]byte, error) {
@@ -339,8 +524,8 @@ func readVLESSRequest(reader io.Reader, expectedToken string) (protocolTunnelReq
 	case protocolCmdMux:
 		return protocolTunnelRequest{
 			cmd:  cmd,
-			host: "v1.mux.cool",
-			port: 666,
+			host: xrayMuxCoolHost,
+			port: xrayMuxCoolPort,
 			flow: flow,
 		}, nil
 	default:

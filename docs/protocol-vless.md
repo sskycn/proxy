@@ -167,4 +167,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-VLESS supports UDP relay by opening one VLESS UDP request per UDP target. Use `native` when you need tunnel mux.
+VLESS supports UDP relay by opening one VLESS UDP request per UDP target when mux is disabled. When `tunnel_mux` is enabled, VLESS uses Xray-compatible mux.cool frames on one shared VLESS mux command connection, so tcptun can interoperate with Xray mux and with another tcptun endpoint.

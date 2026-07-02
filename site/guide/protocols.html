@@ -23,9 +23,9 @@
               <thead><tr><th>协议</th><th>token 格式</th><th>TCP</th><th>UDP relay</th><th>mux</th><th>兼容目标</th></tr></thead>
               <tbody>
                 <tr><td><code>native</code></td><td>长随机字符串</td><td>支持</td><td>支持</td><td>支持</td><td>tcptun 自有协议</td></tr>
-                <tr><td><code>vless</code></td><td>UUID</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>VLESS TCP/UDP、REALITY/Vision</td></tr>
-                <tr><td><code>vmess</code></td><td>UUID</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>VMess AEAD，security none</td></tr>
-                <tr><td><code>trojan</code></td><td>password</td><td>支持</td><td>支持</td><td>不使用项目内 mux</td><td>Trojan TCP/UDP</td></tr>
+                <tr><td><code>vless</code></td><td>UUID</td><td>支持</td><td>支持</td><td>tcptun 两端支持</td><td>VLESS TCP/UDP、REALITY/Vision</td></tr>
+                <tr><td><code>vmess</code></td><td>UUID</td><td>支持</td><td>支持</td><td>tcptun 两端支持</td><td>VMess AEAD，security none</td></tr>
+                <tr><td><code>trojan</code></td><td>password</td><td>支持</td><td>支持</td><td>tcptun 两端支持</td><td>Trojan TCP/UDP</td></tr>
               </tbody>
             </table>
           </section>
@@ -113,7 +113,7 @@ tcptun client \
               <li>VLESS/VMess 的 token 不是 UUID：生成器会报 <code>--token must be a UUID</code>。</li>
               <li>client 和 server 协议不一致：握手失败，连接无法建立。</li>
               <li>client 和 server transport/path/TLS 不一致：看起来端口通，但应用请求失败。</li>
-              <li>在非 native 协议上期待 tunnel mux：项目内 mux 只适合 native。</li>
+              <li>把 Trojan 的 tcptun 私有 tunnel mux 当成 Xray/V2Ray 的 mux：VLESS/VMess 使用 Xray 兼容 mux.cool，Trojan 私有 mux 只在两端都是 tcptun 时使用。</li>
             </ul>
             <div class="doc-next"><a class="button primary" href="transports.html">下一步：transport 与安全层</a><a class="button secondary" href="reference.html">查看参数参考</a></div>
           </section>

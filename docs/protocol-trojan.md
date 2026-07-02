@@ -115,4 +115,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-Trojan supports UDP relay with the standard Trojan UDP packet format. Use `native` when you need tunnel mux.
+Trojan supports UDP relay with the standard Trojan UDP packet format when mux is disabled. When both ends are tcptun and `tunnel_mux` is enabled, Trojan can carry the tcptun-private mux layer on one shared tunnel connection.

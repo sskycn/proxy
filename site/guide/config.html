@@ -149,7 +149,7 @@
                 <tr><td>认证</td><td><code>--token</code></td><td>VLESS/VMess 必须是 UUID；native/Trojan 可以是长随机字符串。留空自动生成。</td></tr>
                 <tr><td>TLS</td><td><code>--tls</code>、<code>--tls-cert</code>、<code>--tls-key</code>、<code>--tls-server-name</code></td><td>服务端写证书和私钥路径，客户端写启用 TLS 和校验名称。</td></tr>
                 <tr><td>REALITY</td><td><code>--tunnel-security reality</code> 及 <code>--reality-*</code></td><td>只能配合 <code>--protocol vless --transport raw</code>。生成 both/server 时 private key 可留空自动生成。</td></tr>
-                <tr><td>mux</td><td><code>--mux true|false</code></td><td>只建议 native 开启。其他兼容协议通常不使用项目内 mux。</td></tr>
+                <tr><td>mux</td><td><code>--mux true|false</code></td><td>tcptun 两端部署时建议开启；VLESS/VMess 使用 Xray 兼容 mux.cool，Trojan 使用 tcptun 私有 mux。</td></tr>
                 <tr><td>本地认证</td><td><code>--client-socks5-username</code>、<code>--client-socks5-password</code></td><td>写入客户端本地 SOCKS5 入口认证；用户名或密码任一非空都会启用认证。</td></tr>
                 <tr><td>路由</td><td><code>--force-ip-cidrs</code></td><td>生成 route.json 时预置强制上游 CIDR，例如 <code>1.1.1.0/24,8.8.8.8/32</code>。</td></tr>
               </tbody>

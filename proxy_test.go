@@ -3709,6 +3709,110 @@ func TestRunProxyClientServerRejectsPrivateProtocolTunnel(t *testing.T) {
 	}
 }
 
+func TestProtocolPrivateMuxMultiplexesNativeTunnelRequests(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		token    string
+	}{
+		{
+			name:     "vless",
+			protocol: tunnelProtocolVLESS,
+			token:    "11111111-1111-4111-8111-111111111111",
+		},
+		{
+			name:     "vmess",
+			protocol: tunnelProtocolVMess,
+			token:    "22222222-2222-4222-8222-222222222222",
+		},
+		{
+			name:     "trojan",
+			protocol: tunnelProtocolTrojan,
+			token:    "secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientConn, serverConn := net.Pipe()
+			t.Cleanup(func() {
+				if err := clientConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) && !isExpectedNetworkClose(err) {
+					t.Errorf("close client pipe: %v", err)
+				}
+				if err := serverConn.Close(); err != nil && !errors.Is(err, net.ErrClosed) && !isExpectedNetworkClose(err) {
+					t.Errorf("close server pipe: %v", err)
+				}
+			})
+
+			server := &proxyServer{
+				cfg: config{
+					Token:                 tt.token,
+					TunnelProtocol:        tt.protocol,
+					TunnelMux:             true,
+					DialTimeout:           time.Second,
+					UDPSessionTimeout:     time.Second,
+					HeartbeatInterval:     time.Minute,
+					ConnectionIdleTimeout: time.Minute,
+					BufferSize:            4096,
+				},
+				dialer: net.Dialer{Timeout: time.Second},
+				log:    io.Discard,
+			}
+			serverErr := make(chan error, 1)
+			go func() {
+				serverErr <- server.handleProtocolTunnelConn(context.Background(), serverConn, bufio.NewReader(serverConn))
+			}()
+
+			client := &proxyServer{
+				cfg: config{
+					Token:          tt.token,
+					TunnelProtocol: tt.protocol,
+					TunnelMux:      true,
+				},
+				log: io.Discard,
+			}
+			muxConn, muxReader, err := client.openProtocolMuxConn(clientConn, bufio.NewReader(clientConn))
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := newMuxSession(muxConn, muxReader, true)
+
+			for i := 0; i < 2; i++ {
+				stream, err := session.openStream(context.Background())
+				if err != nil {
+					t.Fatalf("open stream %d: %v", i, err)
+				}
+				if err := writeTunnelRequest(stream, tunnelRequest{
+					cmd:   tunnelCmdTCPConnect,
+					token: tt.token,
+					host:  "127.0.0.1",
+					port:  80,
+				}); err != nil {
+					t.Fatalf("write stream request %d: %v", i, err)
+				}
+				if err := readTunnelResponse(stream); err == nil {
+					t.Fatalf("stream %d response succeeded, want private target rejection", i)
+				}
+				if err := stream.Close(); err != nil && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+					t.Fatalf("close stream %d: %v", i, err)
+				}
+			}
+
+			if err := session.Close(); err != nil && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+				t.Fatalf("close mux session: %v", err)
+			}
+			select {
+			case err := <-serverErr:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("server mux handler did not stop")
+			}
+		})
+	}
+}
+
 func TestRunProxyClientServerRejectsPrivateTrojanRawTLS(t *testing.T) {
 	certFile, keyFile := writeTestCertificateFiles(t)
 	serverAddr := reserveTCPAddr(t)

@@ -285,6 +285,10 @@ func (s *proxyServer) handleTunnelMux(ctx context.Context, conn net.Conn, reader
 	if err := writeTunnelResponse(conn, tunnelStatusOK, ""); err != nil {
 		return err
 	}
+	return s.serveMuxSession(ctx, conn, reader)
+}
+
+func (s *proxyServer) serveMuxSession(ctx context.Context, conn net.Conn, reader io.Reader) error {
 	session := newMuxSession(conn, reader, false)
 	var wg sync.WaitGroup
 	defer func() {
@@ -608,16 +612,26 @@ func (s *proxyServer) tunnelMuxSession(ctx context.Context) (*muxSession, error)
 		return nil, closeAfterError(conn, err)
 	}
 	reader := bufio.NewReader(conn)
-	if err := writeTunnelRequest(conn, tunnelRequest{
-		cmd:   tunnelCmdMux,
-		token: s.cfg.Token,
-	}); err != nil {
-		return nil, closeAfterError(conn, err)
+	muxConn := net.Conn(conn)
+	var muxReader io.Reader = reader
+	if s.cfg.TunnelProtocol == tunnelProtocolNative {
+		if err := writeTunnelRequest(conn, tunnelRequest{
+			cmd:   tunnelCmdMux,
+			token: s.cfg.Token,
+		}); err != nil {
+			return nil, closeAfterError(conn, err)
+		}
+		if err := readTunnelResponse(reader); err != nil {
+			return nil, closeAfterError(conn, err)
+		}
+	} else {
+		var muxErr error
+		muxConn, muxReader, muxErr = s.openProtocolMuxConn(conn, reader)
+		if muxErr != nil {
+			return nil, closeAfterError(conn, muxErr)
+		}
 	}
-	if err := readTunnelResponse(reader); err != nil {
-		return nil, closeAfterError(conn, err)
-	}
-	s.mux.session = newMuxSession(conn, reader, true)
+	s.mux.session = newMuxSession(muxConn, muxReader, true)
 	go s.closeIdleTunnelMuxSession(s.mux.session)
 	return s.mux.session, nil
 }
@@ -632,6 +646,21 @@ func (s *proxyServer) resetTunnelMuxSession(session *muxSession) {
 			}
 		}
 		s.mux.session = nil
+	}
+}
+
+func (s *proxyServer) resetCurrentTunnelMuxSession() {
+	s.mux.mu.Lock()
+	session := s.mux.session
+	s.mux.session = nil
+	s.mux.mu.Unlock()
+	if session == nil {
+		return
+	}
+	if err := session.Close(); err != nil && !errors.Is(err, errMuxClosed) && !isExpectedNetworkClose(err) {
+		if logErr := logf(s.log, "close failed mux session: %v\n", err); logErr != nil {
+			return
+		}
 	}
 }
 

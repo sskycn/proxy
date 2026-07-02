@@ -31,7 +31,7 @@ Chinese version: [protocol-native.zh-CN.md](protocol-native.zh-CN.md)
 | `tunnel_protocol: "native"` | server/client | Enables the native protocol. |
 | `token` | server/client | Shared authentication token. Production deployments should always set it. |
 | `tunnel_transport` | server/client | Carrier transport. `raw` is the default and has the lowest overhead. |
-| `tunnel_mux` | server/client | Enables multiplexing. Recommended for `native`. |
+| `tunnel_mux` | server/client | Enables multiplexing. Recommended for tcptun-to-tcptun deployments. |
 | `tunnel_path` | server/client | Path used by WebSocket/HTTP transports. Raw transport can keep the default. |
 | `tunnel_tls` | client | Enables TLS from client to server. |
 | `tunnel_tls_cert` / `tunnel_tls_key` | server | TLS certificate and private key for the server. |
@@ -125,7 +125,7 @@ Client:
 
 ## Multiplexing
 
-`native` supports tunnel multiplexing. With mux enabled, the client keeps one shared tunnel transport connection and opens one logical stream per proxied TCP connection or UDP relay.
+`native` supports tunnel multiplexing with the built-in mux command. With mux enabled, the client keeps one shared tunnel transport connection and opens one logical stream per proxied TCP connection or UDP relay. `vless` and `vmess` use Xray-compatible mux.cool frames, while `trojan` uses the tcptun-private mux layer when both ends are tcptun.
 
 Recommendations:
 

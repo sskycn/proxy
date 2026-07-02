@@ -39,7 +39,27 @@ type protocolUDPUpstream struct {
 	vmessSession *vmessSession
 	vmessReader  *vmessPacketReader
 	vmessWriter  *vmessPacketWriter
+	xrayMux      *xrayMuxStream
 	writeMu      sync.Mutex
+}
+
+type vlessResponseReader struct {
+	reader     io.Reader
+	headerRead bool
+}
+
+func newVLESSResponseReader(reader io.Reader) io.Reader {
+	return &vlessResponseReader{reader: reader}
+}
+
+func (r *vlessResponseReader) Read(p []byte) (int, error) {
+	if !r.headerRead {
+		if err := readVLESSResponse(r.reader); err != nil {
+			return 0, err
+		}
+		r.headerRead = true
+	}
+	return r.reader.Read(p)
 }
 
 func (s *proxyServer) handleProtocolTunnelUDP(ctx context.Context, conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) error {
@@ -75,24 +95,93 @@ func (s *proxyServer) handleProtocolTunnelMux(ctx context.Context, conn net.Conn
 	if s.cfg.TunnelProtocol != tunnelProtocolVLESS {
 		return errProtocolUnsupported
 	}
-	clientConn := conn
-	var clientReader io.Reader = reader
-	vision, err := s.prepareVLESSBodyConn(conn, reader, req)
+	clientConn, clientReader, err := s.prepareProtocolMuxConn(conn, reader, req)
 	if err != nil {
 		return err
 	}
-	if vision != nil {
-		clientConn = vision
-		clientReader = vision
+	return s.handleVLESSXUDP(ctx, clientConn, clientReader)
+}
+
+func (s *proxyServer) handleProtocolPrivateMux(ctx context.Context, conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) error {
+	muxConn, muxReader, err := s.prepareProtocolMuxConn(conn, reader, req)
+	if err != nil {
+		return err
 	}
+	if s.cfg.TunnelProtocol == tunnelProtocolVLESS {
+		buffered := bufio.NewReader(muxReader)
+		header, err := buffered.Peek(2)
+		if err != nil {
+			return err
+		}
+		if !looksLikeMuxFramePrefix(header) {
+			return s.serveXrayMuxSession(ctx, muxConn, buffered)
+		}
+		return s.serveMuxSession(ctx, muxConn, buffered)
+	}
+	return s.serveMuxSession(ctx, muxConn, muxReader)
+}
+
+func (s *proxyServer) handleProtocolXrayMux(ctx context.Context, conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) error {
+	muxConn, muxReader, err := s.prepareProtocolMuxConn(conn, reader, req)
+	if err != nil {
+		return err
+	}
+	return s.serveXrayMuxSession(ctx, muxConn, muxReader)
+}
+
+func (s *proxyServer) prepareProtocolMuxConn(conn net.Conn, reader *bufio.Reader, req protocolTunnelRequest) (net.Conn, io.Reader, error) {
+	switch s.cfg.TunnelProtocol {
+	case tunnelProtocolVLESS:
+		clientConn := conn
+		var clientReader io.Reader = reader
+		vision, err := s.prepareVLESSBodyConn(conn, reader, req)
+		if err != nil {
+			return nil, nil, err
+		}
+		if vision != nil {
+			clientConn = vision
+			clientReader = vision
+		}
+		if err := writeVLESSResponse(conn); err != nil {
+			return nil, nil, err
+		}
+		return clientConn, clientReader, nil
+	case tunnelProtocolVMess:
+		if req.vmessSession == nil {
+			return nil, nil, errProtocolInvalidResponse
+		}
+		vmessConn, err := newVMessResponseConn(conn, *req.vmessSession)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := writeVMessResponseHeader(conn, *req.vmessSession); err != nil {
+			return nil, nil, err
+		}
+		return vmessConn, newVMessRequestReader(reader, *req.vmessSession), nil
+	case tunnelProtocolTrojan:
+		return conn, reader, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported tunnel protocol %q", s.cfg.TunnelProtocol)
+	}
+}
+
+func looksLikeMuxFramePrefix(header []byte) bool {
+	if len(header) < 2 || header[0] != muxVersion {
+		return false
+	}
+	switch header[1] {
+	case muxFrameData, muxFrameOpen, muxFrameClose, muxFrameReset:
+		return true
+	}
+	return false
+}
+
+func (s *proxyServer) handleVLESSXUDP(ctx context.Context, clientConn net.Conn, clientReader io.Reader) error {
 	udpConn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return err
 	}
 	defer closeUDPWithLog(udpConn, s.log, "vless xudp target")
-	if err := writeVLESSResponse(conn); err != nil {
-		return err
-	}
 
 	done := make(chan error, 2)
 	var writeMu sync.Mutex
@@ -297,6 +386,50 @@ func (s *proxyServer) protocolUDPRemoteToClient(ctx context.Context, conn net.Co
 
 func (s *proxyServer) connectViaProtocolTunnelUDP(ctx context.Context, host string, port uint16) (*protocolUDPUpstream, error) {
 	target := s.cfg.ServerAddr
+	if s.cfg.TunnelMux {
+		if s.canUseXrayMuxClient() {
+			stream, err := s.openXrayMuxUDPStream(ctx, host, port)
+			if err == nil {
+				return &protocolUDPUpstream{
+					tcp:      stream,
+					reader:   bufio.NewReader(stream),
+					label:    target,
+					protocol: protocolXrayMux,
+					host:     host,
+					port:     port,
+					xrayMux:  stream,
+				}, nil
+			}
+			s.resetCurrentXrayMuxSession()
+			if s.cfg.Verbose {
+				if logErr := logf(s.log, "open xray mux udp stream failed: %v; falling back to private mux or single protocol connection\n", err); logErr != nil {
+					return nil, errors.Join(err, logErr)
+				}
+			}
+		}
+		conn, err := s.openTunnelMuxStream(ctx)
+		if err != nil {
+			if s.cfg.Verbose {
+				if logErr := logf(s.log, "open protocol mux udp stream failed: %v; falling back to single protocol connection\n", err); logErr != nil {
+					return nil, errors.Join(err, logErr)
+				}
+			}
+		} else {
+			upstream, err := s.initMuxStreamUDP(conn, host, port)
+			if err != nil {
+				if shouldFallbackProtocolMux(err) {
+					s.resetCurrentTunnelMuxSession()
+				} else {
+					return nil, err
+				}
+				if closeErr := conn.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) && !errors.Is(closeErr, errMuxClosed) && !isExpectedNetworkClose(closeErr) {
+					return nil, closeErr
+				}
+			} else {
+				return upstream, nil
+			}
+		}
+	}
 	conn, err := s.dialTunnelTransport(ctx)
 	if err != nil {
 		return nil, err
@@ -311,9 +444,7 @@ func (s *proxyServer) connectViaProtocolTunnelUDP(ctx context.Context, host stri
 		if err := writeVLESSRequest(conn, s.cfg.Token, s.cfg.TunnelFlow, protocolCmdUDP, host, port); err != nil {
 			return nil, closeAfterError(conn, err)
 		}
-		if err := readVLESSResponse(reader); err != nil {
-			return nil, closeAfterError(conn, err)
-		}
+		reader = bufio.NewReader(newVLESSResponseReader(reader))
 	case tunnelProtocolTrojan:
 		if err := writeTrojanRequest(conn, s.cfg.Token, trojanCmdUDP, host, port); err != nil {
 			return nil, closeAfterError(conn, err)
@@ -344,6 +475,28 @@ func (s *proxyServer) connectViaProtocolTunnelUDP(ctx context.Context, host stri
 		upstream.vmessWriter = newVMessPacketWriter(conn, vmessSession.requestBodyIV[:], vmessSession.options&vmessOptionChunkMasking != 0)
 	}
 	return upstream, nil
+}
+
+func (s *proxyServer) initMuxStreamUDP(conn net.Conn, host string, port uint16) (*protocolUDPUpstream, error) {
+	target := s.cfg.ServerAddr
+	reader := bufio.NewReader(conn)
+	if err := writeTunnelRequest(conn, tunnelRequest{
+		cmd:   tunnelCmdUDPRelay,
+		token: s.cfg.Token,
+	}); err != nil {
+		return nil, closeAfterError(conn, err)
+	}
+	if err := readTunnelResponse(reader); err != nil {
+		return nil, closeAfterError(conn, err)
+	}
+	return &protocolUDPUpstream{
+		tcp:      conn,
+		reader:   reader,
+		label:    target,
+		protocol: tunnelProtocolNative,
+		host:     host,
+		port:     port,
+	}, nil
 }
 
 func (s *proxyServer) writeProtocolUDPResponseHeader(w io.Writer, req protocolTunnelRequest) error {
@@ -404,6 +557,17 @@ func (s *proxyServer) writeProtocolUDPFrame(w io.Writer, vmessWriter *vmessPacke
 
 func (u *protocolUDPUpstream) writeFrame(frame protocolUDPFrame) error {
 	switch u.protocol {
+	case tunnelProtocolNative:
+		return writeTunnelUDPFrame(u.tcp, tunnelUDPFrame{
+			host:    frame.host,
+			port:    frame.port,
+			payload: frame.payload,
+		})
+	case protocolXrayMux:
+		if u.xrayMux == nil {
+			return errXrayMuxClosed
+		}
+		return u.xrayMux.writePacket(frame)
 	case tunnelProtocolVLESS:
 		return writeLengthUDPFrame(u.tcp, frame.payload)
 	case tunnelProtocolTrojan:
@@ -420,6 +584,17 @@ func (u *protocolUDPUpstream) writeFrame(frame protocolUDPFrame) error {
 
 func (u *protocolUDPUpstream) readFrame() (protocolUDPFrame, error) {
 	switch u.protocol {
+	case tunnelProtocolNative:
+		frame, err := readTunnelUDPFrame(u.reader)
+		if err != nil {
+			return protocolUDPFrame{}, err
+		}
+		return protocolUDPFrame{host: frame.host, port: frame.port, payload: frame.payload}, nil
+	case protocolXrayMux:
+		if u.xrayMux == nil {
+			return protocolUDPFrame{}, errXrayMuxClosed
+		}
+		return u.xrayMux.readPacket()
 	case tunnelProtocolVLESS:
 		payload, err := readLengthUDPFrame(u.reader)
 		if err != nil {

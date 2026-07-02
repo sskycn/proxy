@@ -26,6 +26,7 @@ const (
 
 	vmessCommandTCP = byte(0x01)
 	vmessCommandUDP = byte(0x02)
+	vmessCommandMux = byte(0x03)
 
 	vmessAddrIPv4   = byte(0x01)
 	vmessAddrDomain = byte(0x02)
@@ -255,8 +256,19 @@ func parseVMessRequestPayload(payload []byte) (protocolTunnelRequest, error) {
 	if security != vmessSecurityNone {
 		return protocolTunnelRequest{}, errVMessUnsupportedSecurity
 	}
-	if command != vmessCommandTCP && command != vmessCommandUDP {
+	if command != vmessCommandTCP && command != vmessCommandUDP && command != vmessCommandMux {
 		return protocolTunnelRequest{}, errProtocolUnsupported
+	}
+	if command == vmessCommandMux {
+		if paddingLen != checksumStart-38 {
+			return protocolTunnelRequest{}, errTunnelInvalidLength
+		}
+		return protocolTunnelRequest{
+			cmd:          protocolCmdTCP,
+			host:         xrayMuxCoolHost,
+			port:         xrayMuxCoolPort,
+			vmessSession: &session,
+		}, nil
 	}
 	host, port, consumed, err := readVMessAddressFromPayload(payload[38:checksumStart])
 	if err != nil {

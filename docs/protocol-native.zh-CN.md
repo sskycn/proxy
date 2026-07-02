@@ -31,7 +31,7 @@ English version: [protocol-native.md](protocol-native.md)
 | `tunnel_protocol: "native"` | server/client | 启用本项目原生协议。 |
 | `token` | server/client | 共享认证 token。server 配置为空时不强制认证；生产环境建议总是设置。 |
 | `tunnel_transport` | server/client | 承载层。默认 `raw`，也可使用 `ws`、`h2`、`h3`。 |
-| `tunnel_mux` | server/client | 是否开启多路复用。native 默认建议开启。 |
+| `tunnel_mux` | server/client | 是否开启多路复用。tcptun 两端部署时建议开启。 |
 | `tunnel_path` | server/client | HTTP/WebSocket 类 transport 使用的路径。raw transport 可保留默认值。 |
 | `tunnel_tls` | client | client 是否使用 TLS 连接 server。 |
 | `tunnel_tls_cert` / `tunnel_tls_key` | server | server 侧 TLS 证书和私钥。 |
@@ -127,7 +127,7 @@ client:
 
 ## 多路复用
 
-`native` 支持 tunnel mux。开启后，client 会维持一条到底层 transport 的共享连接，并为每条 TCP 连接或 UDP relay 开一个逻辑 stream。
+`native` 通过内置 mux command 支持 tunnel mux。开启后，client 会维持一条到底层 transport 的共享连接，并为每条 TCP 连接或 UDP relay 开一个逻辑 stream。`vless` 和 `vmess` 使用 Xray 兼容 mux.cool 帧；`trojan` 在两端都是 tcptun 时使用 tcptun 私有 mux 层。
 
 建议：
 

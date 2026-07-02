@@ -238,6 +238,7 @@ type proxyServer struct {
 	bufferPool sync.Pool
 	log        io.Writer
 	mux        tunnelMuxClient
+	xrayMux    xrayMuxClient
 	reality    *realityServer
 }
 
@@ -1521,6 +1522,7 @@ func isExpectedNetworkClose(err error) bool {
 	}
 	return errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
 		errors.Is(err, syscall.EPIPE) ||
 		errors.Is(err, syscall.ECONNRESET)
 }

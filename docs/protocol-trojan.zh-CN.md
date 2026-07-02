@@ -115,4 +115,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-Trojan 使用标准 Trojan UDP packet 格式支持 UDP relay。需要 tunnel mux 时请选择 `native` 协议。
+关闭 mux 时，Trojan 使用标准 Trojan UDP packet 格式支持 UDP relay。当两端都是 tcptun 且开启 `tunnel_mux` 时，Trojan 可以在一条共享 tunnel 连接上承载 tcptun 私有 mux 层。

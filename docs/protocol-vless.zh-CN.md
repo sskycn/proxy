@@ -167,4 +167,4 @@ bin/tcptun server
 bin/tcptun client
 ```
 
-VLESS 会为每个 UDP 目标打开一条 VLESS UDP 请求来支持 UDP relay。需要 tunnel mux 时请选择 `native` 协议。
+关闭 mux 时，VLESS 会为每个 UDP 目标打开一条 VLESS UDP 请求来支持 UDP relay。开启 `tunnel_mux` 时，VLESS 会在一条共享 VLESS mux command 连接上使用 Xray 兼容 mux.cool 帧，因此可以和 Xray mux 互通，也可以和另一端 tcptun 互通。

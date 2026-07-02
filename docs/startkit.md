@@ -89,7 +89,7 @@ These fields are loaded from `config.json`, `server.json`, or `client.json`.
 | `tunnel_tls_insecure` | client | Skip TLS certificate verification. Use only for tests. |
 | `tunnel_security` | server/client | Extra security layer. Currently used for VLESS REALITY with value `reality`. |
 | `tunnel_flow` | server/client | VLESS flow, for example `xtls-rprx-vision`. |
-| `tunnel_mux` | server/client | Enables this project's tunnel multiplexing. Currently supported by `native`. |
+| `tunnel_mux` | server/client | Enables tunnel multiplexing. `native` uses the built-in mux command; `vless` and `vmess` use Xray-compatible mux.cool frames; `trojan` uses tcptun-private mux when both ends are tcptun. |
 | `upstream_protocol` | client/local | Upstream protocol used for parsed proxy traffic: `socks5` or `mixed`. |
 | `socks5_username` | client/local | Local SOCKS5 username. Setting username or password enables username/password auth for SOCKS5 clients. |
 | `socks5_password` | client/local | Local SOCKS5 password. |
@@ -155,9 +155,9 @@ For parsed TCP proxy traffic, force-upstream route rules win first. Otherwise tc
 | Protocol | TCP | SOCKS5 UDP relay | Tunnel mux | TLS | REALITY/Vision | Xray compatibility target |
 | --- | --- | --- | --- | --- | --- | --- |
 | native | yes | yes | yes | yes | no | Not applicable |
-| vless | yes | yes | no | yes | yes | VLESS TCP/UDP, REALITY/Vision |
-| vmess | yes | yes | no | yes | no | VMess AEAD TCP/UDP, security none |
-| trojan | yes | yes | no | recommended | no | Trojan TCP/UDP |
+| vless | yes | yes | yes | yes | yes | VLESS TCP/UDP, REALITY/Vision, mux.cool |
+| vmess | yes | yes | yes | yes | no | VMess AEAD TCP/UDP, security none, mux.cool |
+| trojan | yes | yes | tcptun-to-tcptun | recommended | no | Trojan TCP/UDP |
 
 ## Which Protocol Should I Use?
 
